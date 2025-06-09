@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: postgresPharmacy
+    environment:
+      POSTGRES_USER: pharmacy
+      POSTGRES_PASSWORD: pharmacy.ps
+      POSTGRES_DB: pharmacy_db
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgresPharmacy:/var/lib/postgresql/data
+
+volumes:
+  postgresPharmacy:
