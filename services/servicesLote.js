@@ -96,7 +96,7 @@ class servicesLote {
       });
 
       // 3) Si efectivamente quieres devolver sólo los “top 20” que quedan tras filtrar:
-      const top20 = lotesConStock.slice(0, 20);
+      const top20 = lotesConStock.slice(0, 500);
 
       return top20;
     } catch (error) {

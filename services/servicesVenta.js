@@ -258,6 +258,7 @@ class servicesVenta {
       const fecha_venta = ventaDetalles[0].fecha_venta;
       const id_trabajador = ventaDetalles[0].id_trabajador;
       const clienteId = ventaDetalles[0].clienteId;
+      const total = ventaDetalles[0].total;
 
       let totalVenta = 0;
       const mods = {};
@@ -322,15 +323,15 @@ class servicesVenta {
       // Actualizar caja y registrar movimiento
       const caja = await Caja.findByPk(id_caja, { transaction: t });
       if (!caja) throw new Error(`Caja ${id_caja} no encontrada`);
-      const nuevoMonto = parseFloat(caja.monto_final) - totalVenta;
+      const nuevoMonto = parseFloat(caja.monto_final) - parseFloat(total);
       await caja.update({ monto_final: nuevoMonto }, { transaction: t });
 
       await MovimientoCaja.create(
         {
           id_caja,
-          tipo_movimiento: "Egreso",
+          tipo_movimiento: "Retiro",
           motivo: "Anulación de venta",
-          monto: totalVenta,
+          monto: parseFloat(total),
           fecha_movimiento: fecha_venta,
           id_trabajador,
         },

@@ -17,7 +17,7 @@ const generateToken = (user, tipo) => {
     id: user.id_trabajador || user.id_administrador,
     tipo,
   };
-  return jwt.sign(payload, jwtSecret, { expiresIn: "3h" });
+  return jwt.sign(payload, jwtSecret, { expiresIn: "8h" });
 };
 
 const loginUser = async (req, res) => {
