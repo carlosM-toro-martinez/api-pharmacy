@@ -4,7 +4,7 @@ const Lote = require("../models/Lote");
 const MovimientoInventarioService = require("./servicesMovimientoInventario");
 const InventarioService = require("./servicesInventario");
 const sequelize = require("../libs/dbConexionORM");
-const { DetalleCompra, MovimientoInventario } = require("../models");
+const { DetalleCompra, MovimientoInventario, Proveedor } = require("../models");
 
 const movimientoInventarioService = new MovimientoInventarioService();
 const inventarioService = new InventarioService();
@@ -190,6 +190,10 @@ class servicesProducto {
                   {
                     model: DetalleCompra,
                     as: "detalleCompra",
+                    include: {
+                      model: Proveedor,
+                      as: "proveedor",
+                    },
                   },
                 ],
               },

@@ -103,10 +103,10 @@ class servicesDetalleCompra {
         throw new Error(`DetalleCompra with ID ${id_detalle} not found`);
       }
 
-      const { precio_unitario, precioVenta, id_lote } = data;
+      const { precio_unitario, precioVenta, id_lote, id_proveedor } = data;
 
-      if (precio_unitario !== undefined) {
-        await detalleCompra.update({ precio_unitario });
+      if (precio_unitario !== undefined && id_proveedor !== undefined) {
+        await detalleCompra.update({ precio_unitario, id_proveedor });
       }
 
       if (precioVenta !== undefined && id_lote) {

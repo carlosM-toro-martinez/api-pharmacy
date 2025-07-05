@@ -390,6 +390,160 @@ class servicesReporte {
       throw error;
     }
   }
+
+  async obtenerHistorialProducto(id_producto) {
+    const compras = await DetalleCompra.findAll({
+      where: { id_producto },
+      include: [
+        {
+          model: Trabajador,
+          as: "trabajadorCompra",
+          attributes: ["id_trabajador", "nombre"],
+        },
+        {
+          model: Proveedor,
+          as: "proveedor",
+          attributes: ["id_proveedor", "nombre"],
+        },
+      ],
+    });
+
+    const ventas = await DetalleVenta.findAll({
+      where: { id_producto },
+      include: [
+        {
+          model: Venta,
+          as: "venta",
+          attributes: ["id_venta", "fecha_venta"],
+          include: [
+            {
+              model: Trabajador,
+              as: "trabajadorVenta",
+              attributes: ["id_trabajador", "nombre"],
+            },
+            {
+              model: Cliente,
+              as: "cliente",
+              attributes: ["id_cliente", "nombre"],
+            },
+          ],
+        },
+      ],
+    });
+
+    const movimientos = await MovimientoInventario.findAll({
+      where: {
+        id_producto,
+        tipo_movimiento: "Salida sin venta",
+      },
+      include: [
+        {
+          model: Trabajador,
+          as: "trabajadorMovimientoInventario",
+          attributes: ["id_trabajador", "nombre"],
+        },
+      ],
+    });
+
+    const historial = [];
+
+    for (const compra of compras) {
+      historial.push({
+        tipo: "compra",
+        fecha: compra.fecha_compra,
+        trabajador: compra.trabajadorCompra,
+        proveedor: compra.proveedor,
+        detalle: {
+          cantidad: compra.cantidad,
+          subCantidad: compra.subCantidad,
+          peso: compra.peso,
+          precio_unitario: compra.precio_unitario,
+        },
+      });
+    }
+
+    for (const ventaDetalle of ventas) {
+      historial.push({
+        tipo: "venta",
+        fecha: ventaDetalle.venta?.fecha_venta,
+        trabajador: ventaDetalle.venta?.trabajadorVenta,
+        cliente: ventaDetalle.venta?.cliente,
+        detalle: {
+          cantidad: ventaDetalle.cantidad,
+          subCantidad: ventaDetalle.subCantidad,
+          peso: ventaDetalle.peso,
+          precio_unitario: ventaDetalle.precio_unitario,
+        },
+      });
+    }
+
+    for (const mov of movimientos) {
+      historial.push({
+        tipo: "movimiento",
+        fecha: mov.fecha_movimiento,
+        tipo_movimiento: mov.tipo_movimiento,
+        trabajador: mov.trabajadorMovimientoInventario,
+        detalle: {
+          cantidad: mov.cantidad,
+          subCantidad: mov.subCantidad,
+          peso: mov.peso,
+          lote: mov.lote,
+        },
+      });
+    }
+
+    historial.sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+
+    return historial;
+  }
+
+  async obtenerProductosMasVendidos() {
+    const productos = await Producto.findAll({
+      include: [
+        {
+          model: DetalleVenta,
+          as: "detallesVenta",
+          attributes: [
+            "id_detalle",
+            "id_venta",
+            "cantidad",
+            "subCantidad",
+            "peso",
+            "precio_unitario",
+          ],
+        },
+      ],
+    });
+
+    const productosConVentas = productos
+      .map((producto) => {
+        const totalVendidas = producto.detallesVenta.reduce(
+          (acc, detalle) => acc + (detalle.cantidad || 0),
+          0
+        );
+
+        const totalUnidadesVendidas = producto.detallesVenta.reduce(
+          (acc, detalle) => acc + (detalle.subCantidad || 0),
+          0
+        );
+
+        return {
+          ...producto.toJSON(),
+          totalVendidas,
+          totalUnidadesVendidas,
+        };
+      })
+      .filter(
+        (producto) =>
+          producto.totalVendidas > 0 || producto.totalUnidadesVendidas > 0
+      );
+
+    productosConVentas.sort(
+      (a, b) => b.totalUnidadesVendidas - a.totalUnidadesVendidas
+    );
+
+    return productosConVentas;
+  }
 }
 
 module.exports = servicesReporte;
