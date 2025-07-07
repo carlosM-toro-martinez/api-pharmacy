@@ -147,102 +147,82 @@ class servicesVenta {
     }
   }
 
-  async procesarInventario(ventaDetalles) {
-    const transaction = await sequelize.transaction();
+  async procesarInventario(dataVenta, detalles, id_caja) {
+    return await sequelize.transaction(async (t) => {
+      const mods = {};
 
-    try {
-      const productoModificaciones = {};
+      for (const det of detalles) {
+        const { id_producto, id_lote, cantidad, cantidad_unidad, peso } = det;
 
-      for (const detalle of ventaDetalles) {
-        const {
-          id_producto,
-          id_lote,
-          cantidad = 0,
-          cantidad_unidad = 0,
-          id_trabajador,
-        } = detalle;
-
-        // Buscar inventario
-        const inventario = await Inventario.findOne({
+        const inv = await Inventario.findOne({
           where: { id_producto, id_lote },
-          transaction,
+          transaction: t,
         });
+        if (!inv)
+          throw new Error("Inventario no encontrado para producto/lote");
 
-        if (!inventario) {
-          throw new Error(
-            `No se encontró inventario para producto ${id_producto}, lote ${id_lote}`
-          );
-        }
+        inv.subCantidad = decrementar(
+          "subCantidad",
+          inv.subCantidad,
+          cantidad_unidad
+        );
+        inv.cantidad = decrementar("cantidad", inv.cantidad, cantidad);
+        inv.peso = decrementar("peso", inv.peso, peso);
 
-        // Verificar stock suficiente
-        const nuevaCantidad = inventario.cantidad - cantidad;
-        const nuevaSubCantidad = inventario.subCantidad - cantidad_unidad;
-
-        if (nuevaCantidad < 0 || nuevaSubCantidad < 0) {
-          throw new Error("Inventario insuficiente para el movimiento.");
-        }
-
-        // Actualizar inventario
-        await inventario.update(
+        await inv.update(
           {
-            cantidad: nuevaCantidad,
-            subCantidad: nuevaSubCantidad,
+            cantidad: inv.cantidad,
+            subCantidad: inv.subCantidad,
+            peso: inv.peso,
           },
-          { transaction }
+          { transaction: t }
         );
 
-        // Preparar modificación al producto
-        if (!productoModificaciones[id_producto]) {
-          const producto = await Producto.findByPk(id_producto, {
-            transaction,
-          });
-          if (!producto) throw new Error("Producto no encontrado.");
-
-          productoModificaciones[id_producto] = {
-            producto,
-            stock: producto.stock,
-            subCantidad: producto.subCantidad,
-          };
-        }
-
-        // Acumular cambios por producto
-        productoModificaciones[id_producto].stock -= cantidad;
-        productoModificaciones[id_producto].subCantidad -= cantidad_unidad;
-
-        // Registrar movimiento
         await MovimientoInventario.create(
           {
             id_producto,
-            fecha_movimiento: new Date(),
+            fecha_movimiento: dataVenta.fecha_venta,
             tipo_movimiento: "Salida sin venta",
-            cantidad,
+            cantidad: cantidad,
             subCantidad: cantidad_unidad,
-            id_trabajador,
+            id_trabajador: dataVenta.id_trabajador,
             lote: id_lote,
           },
-          { transaction }
+          { transaction: t }
+        );
+
+        if (!mods[id_producto]) {
+          const prod = await Producto.findByPk(id_producto, { transaction: t });
+          if (!prod) throw new Error("Producto no encontrado");
+          mods[id_producto] = {
+            prod,
+            stock: prod.stock,
+            subCantidad: prod.subCantidad,
+            peso: prod.peso,
+          };
+        }
+
+        mods[id_producto].stock = decrementar(
+          "stock",
+          mods[id_producto].stock,
+          cantidad
+        );
+        mods[id_producto].subCantidad = decrementar(
+          "subCantidad",
+          mods[id_producto].subCantidad,
+          cantidad_unidad
+        );
+        mods[id_producto].peso = decrementar(
+          "peso",
+          mods[id_producto].peso,
+          peso
         );
       }
 
-      // Aplicar los cambios acumulados a los productos
-      for (const mod of Object.values(productoModificaciones)) {
-        const { producto, stock, subCantidad } = mod;
-
-        if (stock < 0 || subCantidad < 0) {
-          await transaction.rollback();
-          throw new Error("Producto sin stock suficiente para el movimiento.");
-        }
-
-        await producto.update({ stock, subCantidad }, { transaction });
+      for (const { prod, stock, subCantidad, peso } of Object.values(mods)) {
+        await prod.update({ stock, subCantidad, peso }, { transaction: t });
       }
-
-      await transaction.commit();
-
-      return { message: "Movimiento de inventario registrado correctamente." };
-    } catch (error) {
-      await transaction.rollback();
-      throw error;
-    }
+    });
   }
 
   async anularVenta(ventaDetalles) {
