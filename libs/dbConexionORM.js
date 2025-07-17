@@ -27,3 +27,19 @@ sequelize
   .catch((err) => console.error("Error al conectar:", err));
 
 module.exports = sequelize;
+
+// libs/dbConexionORM.js
+// let currentSequelize = null;
+
+// function setSequelizeConnection(sequelize) {
+//   currentSequelize = sequelize;
+// }
+
+// function getSequelizeConnection() {
+//   if (!currentSequelize) {
+//     throw new Error("Sequelize no ha sido inicializado");
+//   }
+//   return currentSequelize;
+// }
+
+// module.exports = { setSequelizeConnection, getSequelizeConnection };

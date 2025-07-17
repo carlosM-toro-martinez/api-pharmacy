@@ -45,19 +45,26 @@ class servicesReporte {
           },
         ],
       });
-      const lotesAgrupados = lotes.reduce((agrupados, lote) => {
-        const { numero_lote } = lote;
-        if (!agrupados[numero_lote]) {
-          agrupados[numero_lote] = [];
-        }
-        agrupados[numero_lote].push(lote);
-        return agrupados;
-      }, {});
 
-      const resultado = Object.keys(lotesAgrupados).map((numeroLote) => ({
-        numero_lote: numeroLote,
-        lotes: lotesAgrupados[numeroLote].map((lote) => ({
+      // Agrupar lotes por id_proveedor
+      const lotesAgrupadosPorProveedor = lotes.reduce((agrupados, lote) => {
+        const proveedor = lote.detalleCompra?.proveedor;
+        if (!proveedor) return agrupados;
+
+        const idProveedor = proveedor.id_proveedor;
+        const nombreProveedor = proveedor.nombre;
+
+        if (!agrupados[idProveedor]) {
+          agrupados[idProveedor] = {
+            id_proveedor: idProveedor,
+            nombre: nombreProveedor,
+            lotes: [],
+          };
+        }
+
+        agrupados[idProveedor].lotes.push({
           id_lote: lote.id_lote,
+          numero_lote: lote.numero_lote,
           fecha_ingreso: lote.fecha_ingreso,
           fecha_caducidad: lote.fecha_caducidad,
           cantidad: lote.cantidad,
@@ -66,7 +73,6 @@ class servicesReporte {
           cantidadPorCaja: lote.cantidadPorCaja,
           detalleCompra: {
             id_detalle: lote.detalleCompra.id_detalle,
-            id_proveedor: lote.detalleCompra.id_proveedor,
             cantidad: lote.detalleCompra.cantidad,
             precio_unitario: lote.detalleCompra.precio_unitario,
             fecha_compra: lote.detalleCompra.fecha_compra,
@@ -75,20 +81,20 @@ class servicesReporte {
               nombre: lote.detalleCompra.producto.nombre,
               codigo_barra: lote.detalleCompra.producto.codigo_barra,
             },
-            proveedor: {
-              id_proveedor: lote.detalleCompra.proveedor.id_proveedor,
-              nombre: lote.detalleCompra.proveedor.nombre,
-            },
           },
-        })),
-      }));
+        });
+
+        return agrupados;
+      }, {});
+
+      // Convertir objeto agrupado en array y ordenar por nombre del proveedor
+      const resultado = Object.values(lotesAgrupadosPorProveedor).sort((a, b) =>
+        a.nombre.toLowerCase().localeCompare(b.nombre.toLowerCase())
+      );
 
       return resultado;
     } catch (error) {
-      console.error(
-        "Error fetching lotes agrupados por numero de lote:",
-        error
-      );
+      console.error("Error al agrupar lotes por proveedor:", error);
       throw error;
     }
   }
@@ -194,7 +200,6 @@ class servicesReporte {
               {
                 model: Producto,
                 as: "producto",
-                attributes: ["nombre"],
               },
               {
                 model: Lote,

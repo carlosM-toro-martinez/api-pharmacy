@@ -1,3 +1,4 @@
+const { Sequelize } = require("sequelize");
 const Producto = require("../models/Producto");
 const Inventario = require("../models/Inventario");
 const Lote = require("../models/Lote");
@@ -265,6 +266,17 @@ class servicesProducto {
 
         const loteData = { ...item.loteData, id_detalle_compra };
         const newLote = await Lote.create(loteData, { transaction });
+
+        await Lote.update(
+          { precioVenta: newLote.precioVenta },
+          {
+            where: {
+              id_producto: newLote.id_producto,
+              id_lote: { [Sequelize.Op.ne]: newLote.id_lote },
+            },
+            transaction,
+          }
+        );
 
         const product = await Producto.findByPk(item.productId, {
           transaction,
