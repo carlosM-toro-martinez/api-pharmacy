@@ -1,45 +1,81 @@
-const { Sequelize } = require("sequelize");
+// libs/dbConexionORM.js
+const SequelizeLib = require("sequelize");
+const { Sequelize } = SequelizeLib;
 const { config } = require("../config/config");
+const dbDomains = require("../config/databases.json");
 
-const sequelize = new Sequelize(
+//
+// 1) Conexión por defecto al arrancar el servidor
+//
+let currentConnection = new Sequelize(
   config.dbName,
   config.dbUser,
   config.dbPass,
-
   {
     host: config.dbHost,
-    dialect: "postgres",
     port: config.dbPort,
+    dialect: config.dbDialect || "postgres",
     logging: false,
-    // dialectOptions: {
-    //   connectTimeout: 10000,
-    //   ssl: {
-    //     require: true,
-    //     rejectUnauthorized: false,
-    //   },
-    // },
   }
 );
 
-sequelize
-  .authenticate()
-  .then(() => console.log("Conectado a la base de datos PostgreSQL"))
-  .catch((err) => console.error("Error al conectar:", err));
+//
+// 2) Cache para conexiones dinámicas
+//
+const dynamicConnections = {};
 
-module.exports = sequelize;
+//
+// 3) Función para sobreescribir la conexión activa según el dominio
+//
+function setConnectionByDomain(domain) {
+  const cfg = dbDomains.find((d) => d.domain === domain);
+  if (!cfg) {
+    throw new Error(`No DB config found for domain: ${domain}`);
+  }
 
-// libs/dbConexionORM.js
-// let currentSequelize = null;
+  // Usa el nombre de la base como clave
+  const key = cfg.database;
+  if (!dynamicConnections[key]) {
+    dynamicConnections[key] = new Sequelize(
+      cfg.database,
+      cfg.username,
+      cfg.password,
+      {
+        host: cfg.host || config.dbHost,
+        port: cfg.port || config.dbPort,
+        dialect: cfg.dialect || config.dbDialect,
+        logging: false,
+      }
+    );
+  }
 
-// function setSequelizeConnection(sequelize) {
-//   currentSequelize = sequelize;
-// }
+  currentConnection = dynamicConnections[key];
+}
 
-// function getSequelizeConnection() {
-//   if (!currentSequelize) {
-//     throw new Error("Sequelize no ha sido inicializado");
-//   }
-//   return currentSequelize;
-// }
+//
+// 4) El Proxy “fusible” entre el módulo Sequelize y la instancia dinámica
+//
+const sequelizeProxy = new Proxy(
+  {},
+  {
+    get(_, prop) {
+      // 4.1) Si se pide setConnectionByDomain, devuelvo mi función
+      if (prop === "setConnectionByDomain") {
+        return setConnectionByDomain;
+      }
 
-// module.exports = { setSequelizeConnection, getSequelizeConnection };
+      // 4.2) Si es una propiedad estática de Sequelize (Model, DataTypes, etc.)
+      if (prop in SequelizeLib) {
+        return SequelizeLib[prop];
+      }
+
+      // 4.3) Cualquier otro prop lo tomo de la instancia activa
+      const value = currentConnection[prop];
+      return typeof value === "function"
+        ? value.bind(currentConnection)
+        : value;
+    },
+  }
+);
+
+module.exports = sequelizeProxy;

@@ -19,7 +19,9 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(passport.initialize());
-//app.use(seleccionarFarmacia);
+console.log("holaa");
+
+app.use(selectedPharmacy);
 router(app);
 
 // app.use(express.static(path.join(__dirname, "dist")));

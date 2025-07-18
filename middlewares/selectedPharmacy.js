@@ -1,27 +1,13 @@
-const { Sequelize } = require("sequelize");
-const { config } = require("../config/config");
-const { setSequelizeConnection } = require("../libs/dbConexionORM");
-
-const conexiones = {};
+const db = require("../libs/dbConexionORM");
+const configs = require("../config/databases.json");
 
 module.exports = (req, res, next) => {
-  const farmaciaId = req.headers["x-farmacia-id"];
-
-  if (!farmaciaId) {
-    return res.status(400).json({ error: "Falta el ID de farmacia" });
+  const host = req.headers.host.split(":")[0];
+  try {
+    db.setConnectionByDomain(host, configs);
+    next();
+  } catch (err) {
+    console.error("Error DB dinámico:", err.message);
+    res.status(500).json({ error: err.message });
   }
-
-  const dbName = `farmacia_${farmaciaId}`;
-
-  if (!conexiones[dbName]) {
-    conexiones[dbName] = new Sequelize(dbName, config.dbUser, config.dbPass, {
-      host: config.dbHost,
-      port: config.dbPort,
-      dialect: "postgres",
-      logging: false,
-    });
-  }
-
-  setSequelizeConnection(conexiones[dbName]);
-  next();
 };

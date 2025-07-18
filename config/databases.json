@@ -1,0 +1,18 @@
+[
+  {
+    "domain": "farmacia1.com",
+    "database": "farmacia1_db",
+    "username": "usuario1",
+    "password": "pharmacy.ps",
+    "host": "127.0.0.1",
+    "dialect": "postgres"
+  },
+  {
+    "domain": "localhost",
+    "database": "pharmacy_db",
+    "username": "pharmacy",
+    "password": "pharmacy.ps",
+    "host": "localhost",
+    "dialect": "postgres"
+  }
+]
