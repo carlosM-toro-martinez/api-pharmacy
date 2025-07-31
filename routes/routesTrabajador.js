@@ -15,6 +15,19 @@ route.get("/", async (req, res) => {
   }
 });
 
+route.get("/history/:id_trabajador", async (req, res) => {
+  try {
+    const { id_trabajador } = req.params;
+    const trabajador = await trabajadorService.getTrabajadorHistory(
+      id_trabajador
+    );
+    res.json(trabajador);
+  } catch (error) {
+    console.error("Error fetching trabajador:", error);
+    res.status(404).json({ error: error.message });
+  }
+});
+
 // Ruta GET para obtener un trabajador por id_trabajador
 route.get("/:id_trabajador", async (req, res) => {
   try {

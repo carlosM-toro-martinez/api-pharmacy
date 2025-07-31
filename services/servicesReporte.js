@@ -19,6 +19,8 @@ class servicesReporte {
   constructor() {}
 
   async getLotesConDetalleCompra(idInicio, idFin) {
+    console.log(idInicio, idFin);
+
     try {
       const lotes = await Lote.findAll({
         where: {

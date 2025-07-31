@@ -4,6 +4,15 @@ const Rol = require("../models/Rol");
 const RolPermiso = require("../models/RolPermiso");
 const Permiso = require("../models/Permiso");
 const bcrypt = require("bcryptjs");
+const {
+  DetalleCompra,
+  Venta,
+  MovimientoInventario,
+  Producto,
+  Proveedor,
+  Cliente,
+} = require("../models");
+const { Op } = require("sequelize");
 
 class servicesTrabajador {
   constructor() {
@@ -23,6 +32,50 @@ class servicesTrabajador {
       return trabajadores;
     } catch (error) {
       console.error("Error fetching all trabajadores:", error);
+      throw error;
+    }
+  }
+
+  async getTrabajadorHistory(id_trabajador) {
+    try {
+      const compras = await DetalleCompra.findAll({
+        where: { id_trabajador },
+        include: [
+          { model: Proveedor, as: "proveedor" },
+          { model: Producto, as: "producto" },
+        ],
+        order: [["fecha_compra", "DESC"]],
+        limit: 50,
+      });
+
+      const ventas = await Venta.findAll({
+        where: { id_trabajador },
+        include: [
+          { model: Cliente, as: "cliente" },
+          {
+            model: require("../models").DetalleVenta,
+            as: "detallesVenta",
+            include: [{ model: Producto, as: "producto" }],
+          },
+        ],
+        order: [["fecha_venta", "DESC"]],
+        limit: 100,
+      });
+
+      const movimientos = await MovimientoInventario.findAll({
+        where: { id_trabajador },
+        include: [{ model: Producto, as: "producto" }],
+        order: [["fecha_movimiento", "DESC"]],
+        limit: 100,
+      });
+
+      return {
+        compras,
+        ventas,
+        movimientos,
+      };
+    } catch (error) {
+      console.error("Error al obtener historial del trabajador:", error);
       throw error;
     }
   }

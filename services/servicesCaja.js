@@ -127,7 +127,29 @@ class servicesCaja {
 
   async getAllCajas() {
     try {
-      const cajas = await Caja.findAll();
+      const cajas = await Caja.findAll({
+        order: [["id_caja", "DESC"]],
+        include: [
+          {
+            model: MovimientoCaja,
+            as: "movimientos",
+            where: {
+              tipo_movimiento: "cierre",
+            },
+            required: false,
+            include: [
+              {
+                model: Trabajador,
+                as: "trabajadorMovimiento",
+              },
+            ],
+          },
+          {
+            model: Trabajador,
+            as: "trabajadorCierre",
+          },
+        ],
+      });
       return cajas;
     } catch (error) {
       console.error("Error fetching all cajas:", error);

@@ -146,3 +146,4 @@ datas-json
 databaseBack
 uploads
 databaseBackup
+config/databases.json
