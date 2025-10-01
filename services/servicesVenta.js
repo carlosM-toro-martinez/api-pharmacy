@@ -226,7 +226,7 @@ class servicesVenta {
   }
 
   async anularVenta(ventaDetalles) {
-    console.log(ventaDetalles);
+    console.log("anulacion de venta:", ventaDetalles);
 
     return await sequelize.transaction(async (t) => {
       if (!ventaDetalles || ventaDetalles.length === 0) {

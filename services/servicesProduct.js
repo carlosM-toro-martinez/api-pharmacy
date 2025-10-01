@@ -248,14 +248,27 @@ class servicesProducto {
   }
 
   async createDetalleCompraYLoteAndUpdateProduct(arrayData) {
-    console.log(arrayData);
+    console.log("Array original recibido:", arrayData);
+
+    const seen = new Set();
+    const filteredArrayData = arrayData.filter((item) => {
+      const key = `${item.detalleCompraData.id_producto}-${item.detalleCompraData.numero_lote}`;
+      if (seen.has(key)) {
+        console.log("❌ Duplicado encontrado y eliminado:", key);
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+
+    console.log("Array filtrado sin duplicados:", filteredArrayData);
 
     const transaction = await sequelize.transaction();
 
     try {
       const results = [];
 
-      for (const item of arrayData) {
+      for (const item of filteredArrayData) {
         const newDetalleCompra = await DetalleCompra.create(
           item.detalleCompraData,
           {

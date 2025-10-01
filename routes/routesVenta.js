@@ -56,7 +56,6 @@ route.post("/venta-completa", async (req, res) => {
 route.post("/movimiento-inventario", async (req, res) => {
   try {
     const { ventaData, detalles, id_caja } = req.body;
-    console.log(req.body);
 
     const resultado = await ventaService.procesarInventario(
       ventaData,

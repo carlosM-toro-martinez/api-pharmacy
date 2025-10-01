@@ -96,7 +96,7 @@ class servicesDetalleCompra {
 
   async updateDetalleCompra(id_detalle, data) {
     try {
-      console.log(data);
+      console.log("updateDetalleCompra data:", datadata);
 
       const detalleCompra = await DetalleCompra.findByPk(id_detalle);
       if (!detalleCompra) {

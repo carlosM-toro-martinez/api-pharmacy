@@ -6,7 +6,7 @@ module.exports = (req, res, next) => {
   const host = req.headers.origin;
 
   try {
-    console.log(req.headers.origin);
+    //console.log(req.headers.origin);
 
     db.setConnectionByDomain(host, configs);
     next();
