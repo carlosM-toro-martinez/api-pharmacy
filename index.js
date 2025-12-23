@@ -9,7 +9,6 @@ const router = require("./routes");
 const Administrador = db.Administrador;
 const Permiso = db.Permiso;
 const passport = require("passport");
-const selectedPharmacy = require("./middlewares/selectedPharmacy");
 
 require("./middlewares/passportConfig")(passport);
 
@@ -19,8 +18,6 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(passport.initialize());
-
-app.use(selectedPharmacy);
 router(app);
 
 // app.use(express.static(path.join(__dirname, "dist")));
