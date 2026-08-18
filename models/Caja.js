@@ -1,6 +1,7 @@
 const { Model, DataTypes } = require("sequelize");
 const sequelize = require("../libs/dbConexionORM");
 const Trabajador = require("./Trabajador");
+const Sucursal = require("./Sucursal");
 
 class Caja extends Model {}
 
@@ -32,6 +33,14 @@ Caja.init(
         model: Trabajador,
         key: "id_trabajador",
       },
+    },
+    id_sucursal: {
+      type: DataTypes.INTEGER,
+      references: {
+        model: Sucursal,
+        key: "id_sucursal",
+      },
+      allowNull: true,
     },
   },
   {

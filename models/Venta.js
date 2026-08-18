@@ -2,6 +2,7 @@ const { Model, DataTypes } = require("sequelize");
 const sequelize = require("../libs/dbConexionORM");
 const Cliente = require("./Cliente");
 const Trabajador = require("./Trabajador");
+const Sucursal = require("./Sucursal");
 
 class Venta extends Model {}
 
@@ -42,6 +43,14 @@ Venta.init(
       type: DataTypes.STRING(50),
       allowNull: false,
       defaultValue: "Contado",
+    },
+    id_sucursal: {
+      type: DataTypes.INTEGER,
+      references: {
+        model: Sucursal,
+        key: "id_sucursal",
+      },
+      allowNull: true,
     },
   },
   {

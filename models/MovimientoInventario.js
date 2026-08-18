@@ -2,6 +2,7 @@ const { Model, DataTypes } = require("sequelize");
 const sequelize = require("../libs/dbConexionORM");
 const Producto = require("./Producto");
 const Trabajador = require("./Trabajador");
+const Sucursal = require("./Sucursal");
 
 class MovimientoInventario extends Model {}
 
@@ -43,6 +44,22 @@ MovimientoInventario.init(
     },
     lote: {
       type: DataTypes.STRING(255),
+    },
+    id_sucursal: {
+      type: DataTypes.INTEGER,
+      references: {
+        model: Sucursal,
+        key: "id_sucursal",
+      },
+      allowNull: true,
+    },
+    id_sucursal_destino: {
+      type: DataTypes.INTEGER,
+      references: {
+        model: Sucursal,
+        key: "id_sucursal",
+      },
+      allowNull: true,
     },
   },
   {

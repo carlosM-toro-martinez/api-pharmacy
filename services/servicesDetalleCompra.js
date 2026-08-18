@@ -1,10 +1,13 @@
-const { Sequelize } = require("sequelize");
+const { Sequelize, Op } = require("sequelize");
 const { Inventario, MovimientoInventario } = require("../models");
 const DetalleCompra = require("../models/DetalleCompra");
 const Lote = require("../models/Lote");
 const Producto = require("../models/Producto");
 const Proveedor = require("../models/Proveedor");
 const sequelize = require("../libs/dbConexionORM");
+const AjustesService = require("./servicesAjustes");
+
+const ajustesService = new AjustesService();
 
 class servicesDetalleCompra {
   constructor() {
@@ -30,6 +33,12 @@ class servicesDetalleCompra {
           {
             model: Producto,
             as: "producto",
+            where: {
+              activo: {
+                [Op.ne]: false,
+              },
+            },
+            required: true,
             attributes: ["nombre", "id_producto"],
           },
           {
@@ -155,6 +164,7 @@ class servicesDetalleCompra {
       } = detalle;
 
       const productoModificaciones = {};
+      const productosAfectados = new Set([id_producto]);
 
       try {
         // Eliminar inventario
@@ -248,6 +258,10 @@ class servicesDetalleCompra {
             `Error al actualizar el producto con ID ${mod.producto.id}: ${error.message}`
           );
         }
+      }
+
+      for (const idProducto of productosAfectados) {
+        await ajustesService.sincronizarStockProducto(idProducto, transaction);
       }
 
       // Confirmar transacción

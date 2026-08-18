@@ -7,7 +7,7 @@ const ventaService = new VentaService();
 // Ruta GET para obtener todas las ventas
 route.get("/", async (req, res) => {
   try {
-    const ventas = await ventaService.getAllVentas();
+    const ventas = await ventaService.getAllVentas(req.headers["x-sucursal-id"]);
     res.json(ventas);
   } catch (error) {
     console.error("Error fetching ventas:", error);
@@ -18,7 +18,9 @@ route.get("/", async (req, res) => {
 // Ruta GET para obtener todas las ventas
 route.get("/hoy", async (req, res) => {
   try {
-    const ventas = await ventaService.getVentasDelDia();
+    const ventas = await ventaService.getVentasDelDia(
+      req.headers["x-sucursal-id"]
+    );
     res.json(ventas);
   } catch (error) {
     console.error("Error fetching ventas del dia:", error);
@@ -41,8 +43,9 @@ route.get("/:id_venta", async (req, res) => {
 route.post("/venta-completa", async (req, res) => {
   try {
     const { ventaData, detalles, id_caja } = req.body;
+    const id_sucursal = req.headers["x-sucursal-id"] || ventaData?.id_sucursal;
     const venta = await ventaService.realizarVentaCompleta(
-      ventaData,
+      { ...ventaData, id_sucursal },
       detalles,
       id_caja
     );
@@ -56,9 +59,10 @@ route.post("/venta-completa", async (req, res) => {
 route.post("/movimiento-inventario", async (req, res) => {
   try {
     const { ventaData, detalles, id_caja } = req.body;
+    const id_sucursal = req.headers["x-sucursal-id"] || ventaData?.id_sucursal;
 
     const resultado = await ventaService.procesarInventario(
-      ventaData,
+      { ...ventaData, id_sucursal },
       detalles,
       id_caja
     );
@@ -72,7 +76,13 @@ route.post("/movimiento-inventario", async (req, res) => {
 
 route.post("/anular-venta", async (req, res) => {
   try {
-    const ventaDetalles = req.body;
+    const id_sucursal = req.headers["x-sucursal-id"];
+    const ventaDetalles = Array.isArray(req.body)
+      ? req.body.map((detalle) => ({
+          ...detalle,
+          id_sucursal: detalle.id_sucursal || id_sucursal,
+        }))
+      : req.body;
 
     const resultado = await ventaService.anularVenta(ventaDetalles);
 

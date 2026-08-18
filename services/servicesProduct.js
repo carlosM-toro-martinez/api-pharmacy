@@ -1,30 +1,90 @@
 const { Sequelize } = require("sequelize");
+const { Op } = require("sequelize");
 const Producto = require("../models/Producto");
 const Inventario = require("../models/Inventario");
 const Lote = require("../models/Lote");
 const MovimientoInventarioService = require("./servicesMovimientoInventario");
 const InventarioService = require("./servicesInventario");
+const AjustesService = require("./servicesAjustes");
 const sequelize = require("../libs/dbConexionORM");
 const { DetalleCompra, MovimientoInventario, Proveedor } = require("../models");
 
 const movimientoInventarioService = new MovimientoInventarioService();
 const inventarioService = new InventarioService();
+const ajustesService = new AjustesService();
+const comprasEnProceso = new Set();
+const comprasProcesadas = new Map();
+
+const toNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const buildCompraKey = (arrayData) =>
+  JSON.stringify(
+    arrayData.map((item) => ({
+      producto: item.detalleCompraData?.id_producto,
+      proveedor: item.detalleCompraData?.id_proveedor,
+      lote: item.detalleCompraData?.numero_lote || "",
+      cantidad: toNumber(item.detalleCompraData?.cantidad),
+      subCantidad: toNumber(item.detalleCompraData?.subCantidad),
+      precio: toNumber(item.detalleCompraData?.precio_unitario),
+      caducidad: item.detalleCompraData?.fecha_caducidad || "",
+    }))
+  );
 
 class servicesProducto {
   constructor() {
     this.sesion = {};
   }
 
-  async getAllProducts() {
+  async getAllProducts(filters = {}) {
     try {
+      const idSucursal = Number(filters?.id_sucursal);
+      const inventarioWhere =
+        Number.isFinite(idSucursal) && idSucursal > 0
+          ? { id_sucursal: idSucursal }
+          : {};
       const products = await Producto.findAll({
-        include: {
-          model: Lote,
-          as: "lotes",
+        where: {
+          activo: {
+            [Op.ne]: false,
+          },
         },
+        include: [
+          {
+            model: Lote,
+            as: "lotes",
+          },
+          {
+            model: Inventario,
+            as: "inventarios",
+            where: inventarioWhere,
+            required: false,
+            attributes: ["cantidad", "subCantidad", "peso"],
+          },
+        ],
         order: [["id_producto", "DESC"]],
       });
-      return products;
+      return products.map((product) => {
+        const plainProduct = product.toJSON();
+        const inventarios = plainProduct.inventarios || [];
+
+        plainProduct.stock = inventarios.reduce(
+          (total, inventario) => total + toNumber(inventario.cantidad),
+          0
+        );
+        plainProduct.subCantidad = inventarios.reduce(
+          (total, inventario) => total + toNumber(inventario.subCantidad),
+          0
+        );
+        plainProduct.peso = inventarios.reduce(
+          (total, inventario) => total + toNumber(inventario.peso),
+          0
+        );
+
+        return plainProduct;
+      });
     } catch (error) {
       console.error("Error fetching all products:", error);
       throw error;
@@ -33,7 +93,14 @@ class servicesProducto {
 
   async getProductById(id) {
     try {
-      const product = await Producto.findByPk(id);
+      const product = await Producto.findOne({
+        where: {
+          id_producto: id,
+          activo: {
+            [Op.ne]: false,
+          },
+        },
+      });
       if (!product) {
         throw new Error(`Product with ID ${id} not found`);
       }
@@ -124,9 +191,12 @@ class servicesProducto {
           peso: parseFloat(data.peso).toFixed(2),
           fecha_actualizacion: new Date(),
           id_trabajador: data.id_trabajador,
+          id_sucursal: data.id_sucursal,
         },
         transaction
       );
+
+      await ajustesService.sincronizarStockProducto(id, transaction);
 
       await transaction.commit();
 
@@ -168,8 +238,8 @@ class servicesProducto {
       if (!product) {
         throw new Error(`Product with ID ${id} not found`);
       }
-      await product.destroy();
-      return { message: "Product deleted successfully" };
+      await product.update({ activo: false });
+      return { message: "Producto dado de baja correctamente" };
     } catch (error) {
       console.error("Error deleting product:", error);
       throw error;
@@ -178,7 +248,13 @@ class servicesProducto {
 
   async getInventariosByProductId(id) {
     try {
-      const product = await Producto.findByPk(id, {
+      const product = await Producto.findOne({
+        where: {
+          id_producto: id,
+          activo: {
+            [Op.ne]: false,
+          },
+        },
         include: [
           {
             model: Inventario,
@@ -247,8 +323,26 @@ class servicesProducto {
     }
   }
 
-  async createDetalleCompraYLoteAndUpdateProduct(arrayData) {
-    console.log("Array original recibido:", arrayData);
+  async createDetalleCompraYLoteAndUpdateProduct(payload) {
+    const arrayData = Array.isArray(payload) ? payload : payload.items || [];
+    const requestId = Array.isArray(payload) ? null : payload.requestId;
+    const compraKey = buildCompraKey(arrayData);
+
+    if (!arrayData.length) {
+      throw new Error("No hay productos para registrar la compra");
+    }
+
+    if (comprasEnProceso.has(compraKey)) {
+      throw new Error("Esta compra ya se está procesando. Espere un momento.");
+    }
+
+    if (comprasProcesadas.has(compraKey)) {
+      return comprasProcesadas.get(compraKey);
+    }
+
+    comprasEnProceso.add(compraKey);
+
+    console.log("Array original recibido:", { requestId, items: arrayData });
 
     const seen = new Set();
     const filteredArrayData = arrayData.filter((item) => {
@@ -269,6 +363,22 @@ class servicesProducto {
       const results = [];
 
       for (const item of filteredArrayData) {
+        const existingLote = item.detalleCompraData.numero_lote
+          ? await Lote.findOne({
+              where: {
+                id_producto: item.detalleCompraData.id_producto,
+                numero_lote: item.detalleCompraData.numero_lote,
+              },
+              transaction,
+            })
+          : null;
+
+        if (existingLote) {
+          throw new Error(
+            `El lote ${item.detalleCompraData.numero_lote} ya existe para este producto`
+          );
+        }
+
         const newDetalleCompra = await DetalleCompra.create(
           item.detalleCompraData,
           {
@@ -336,6 +446,7 @@ class servicesProducto {
               fecha_movimiento: new Date(),
               id_trabajador: item.productUpdateData.id_trabajador,
               lote: newLote.id_lote,
+              id_sucursal: item.productUpdateData.id_sucursal,
             },
             transaction
           );
@@ -348,7 +459,13 @@ class servicesProducto {
             peso: parseFloat(item.productUpdateData.peso).toFixed(2),
             fecha_actualizacion: new Date(),
             id_trabajador: item.productUpdateData.id_trabajador,
+            id_sucursal: item.productUpdateData.id_sucursal,
           },
+          transaction
+        );
+
+        await ajustesService.sincronizarStockProducto(
+          item.productId,
           transaction
         );
 
@@ -362,11 +479,15 @@ class servicesProducto {
       }
 
       await transaction.commit();
+      comprasProcesadas.set(compraKey, results);
+      setTimeout(() => comprasProcesadas.delete(compraKey), 1000 * 60 * 10);
       return results;
     } catch (error) {
       await transaction.rollback();
       console.error("Error creando registros y actualizando producto:", error);
       throw error;
+    } finally {
+      comprasEnProceso.delete(compraKey);
     }
   }
 }

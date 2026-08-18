@@ -1,5 +1,42 @@
 const Categoria = require("../models/Categoria");
 const Producto = require("../models/Producto");
+const Inventario = require("../models/Inventario");
+const { Op } = require("sequelize");
+
+const toNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const categoriaConProductosActualizados = (categoria) => {
+  const plainCategoria = categoria.toJSON();
+  const productos = plainCategoria.productos || [];
+
+  return {
+    ...plainCategoria,
+    productos: productos.map((producto) => {
+      const inventarios = producto.inventarios || [];
+      const stockInventario = inventarios.reduce(
+        (totales, inventario) => ({
+          stock: totales.stock + toNumber(inventario.cantidad),
+          subCantidad: totales.subCantidad + toNumber(inventario.subCantidad),
+          peso: totales.peso + toNumber(inventario.peso),
+        }),
+        { stock: 0, subCantidad: 0, peso: 0 }
+      );
+
+      return {
+        ...producto,
+        stock: stockInventario.stock,
+        subCantidad: stockInventario.subCantidad,
+        peso: stockInventario.peso,
+        totalCantidad: stockInventario.stock,
+        totalSubCantidad: stockInventario.subCantidad,
+        totalPeso: stockInventario.peso,
+      };
+    }),
+  };
+};
 
 class servicesCategoria {
   constructor() {
@@ -13,10 +50,29 @@ class servicesCategoria {
         include: {
           model: Producto,
           as: "productos",
-          attributes: ["nombre", "codigo_barra", "precio", "stock", "peso"],
+          where: {
+            activo: {
+              [Op.ne]: false,
+            },
+          },
+          required: false,
+          attributes: [
+            "id_producto",
+            "nombre",
+            "codigo_barra",
+            "precio",
+            "stock",
+            "subCantidad",
+            "peso",
+          ],
+          include: {
+            model: Inventario,
+            as: "inventarios",
+            attributes: ["cantidad", "subCantidad", "peso"],
+          },
         },
       });
-      return categorias;
+      return categorias.map(categoriaConProductosActualizados);
     } catch (error) {
       console.error("Error fetching all categorias:", error);
       throw error;
@@ -30,13 +86,32 @@ class servicesCategoria {
         include: {
           model: Producto,
           as: "productos",
-          attributes: ["nombre", "codigo_barra", "precio", "stock"],
+          where: {
+            activo: {
+              [Op.ne]: false,
+            },
+          },
+          required: false,
+          attributes: [
+            "id_producto",
+            "nombre",
+            "codigo_barra",
+            "precio",
+            "stock",
+            "subCantidad",
+            "peso",
+          ],
+          include: {
+            model: Inventario,
+            as: "inventarios",
+            attributes: ["cantidad", "subCantidad", "peso"],
+          },
         },
       });
       if (!categoria) {
         throw new Error(`Categoria with ID ${id_categoria} not found`);
       }
-      return categoria;
+      return categoriaConProductosActualizados(categoria);
     } catch (error) {
       console.error("Error fetching categoria:", error);
       throw error;

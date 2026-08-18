@@ -8,6 +8,35 @@ const Producto = require("../models/Producto");
 const { Cliente, MovimientoInventario, Trabajador } = require("../models");
 const { DateTime } = require("luxon");
 const { Op } = require("sequelize");
+const AjustesService = require("./servicesAjustes");
+const SucursalService = require("./servicesSucursal");
+
+const ajustesService = new AjustesService();
+const sucursalService = new SucursalService();
+const operacionesEnProceso = new Set();
+const operacionesProcesadas = new Map();
+
+const toNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const buildOperacionKey = (tipo, dataVenta, detalles, id_caja) =>
+  JSON.stringify({
+    tipo,
+    id_caja,
+    total: toNumber(dataVenta?.total),
+    id_cliente: dataVenta?.id_cliente,
+    id_trabajador: dataVenta?.id_trabajador,
+    id_sucursal: dataVenta?.id_sucursal,
+    detalles: detalles.map((detalle) => ({
+      id_producto: detalle.id_producto,
+      id_lote: detalle.id_lote,
+      cantidad: toNumber(detalle.cantidad),
+      cantidad_unidad: toNumber(detalle.cantidad_unidad),
+      precio: toNumber(detalle.precio),
+    })),
+  });
 
 function decrementar(nombre, actual, delta = 0) {
   const nuevo = actual - delta;
@@ -20,22 +49,63 @@ class servicesVenta {
     this.sesion = {};
   }
 
+  async obtenerIdSucursalOperacion(idSucursal, transaction) {
+    if (idSucursal) return Number(idSucursal);
+    const sucursalPrincipal = await sucursalService.obtenerSucursalPrincipal(
+      transaction
+    );
+    return sucursalPrincipal.id_sucursal;
+  }
+
   async realizarVentaCompleta(dataVenta, detalles, id_caja) {
+    const operacionKey = buildOperacionKey(
+      "venta-completa",
+      dataVenta,
+      detalles,
+      id_caja
+    );
+
+    if (operacionesEnProceso.has(operacionKey)) {
+      throw new Error("Esta venta ya se está procesando. Espere un momento.");
+    }
+
+    if (operacionesProcesadas.has(operacionKey)) {
+      return operacionesProcesadas.get(operacionKey);
+    }
+
+    operacionesEnProceso.add(operacionKey);
+
+    try {
     return await sequelize.transaction(async (t) => {
       const venta = await Venta.create(dataVenta, { transaction: t });
 
       await this.actualizarCajaYMovimientos(id_caja, dataVenta, t);
 
-      await this.grabarDetallesYAjustarInventario(venta.id_venta, detalles, t);
+      await this.grabarDetallesYAjustarInventario(
+        venta.id_venta,
+        detalles,
+        t,
+        dataVenta?.id_sucursal
+      );
 
       const clienteId = detalles[0].clienteId;
       await this.actualizarPuntosCliente(clienteId, t);
 
+      operacionesProcesadas.set(operacionKey, venta);
+      setTimeout(() => operacionesProcesadas.delete(operacionKey), 1000 * 60 * 10);
+
       return venta;
     });
+    } finally {
+      operacionesEnProceso.delete(operacionKey);
+    }
   }
 
   async actualizarCajaYMovimientos(id_caja, dataVenta, transaction) {
+    if (dataVenta.metodo_pago === "QR") {
+      return;
+    }
+
     const caja = await Caja.findByPk(id_caja, { transaction });
     if (!caja) throw new Error(`Caja ${id_caja} no encontrada`);
 
@@ -49,15 +119,26 @@ class servicesVenta {
         tipo_movimiento: "Ingreso",
         motivo: "Venta realizada",
         monto: montoVenta,
-        fecha_movimiento: dataVenta.fecha_venta,
-        id_trabajador: dataVenta.id_trabajador,
+          fecha_movimiento: dataVenta.fecha_venta,
+          id_trabajador: dataVenta.id_trabajador,
+          id_sucursal: dataVenta.id_sucursal || null,
       },
       { transaction }
     );
   }
 
-  async grabarDetallesYAjustarInventario(id_venta, detalles, transaction) {
+  async grabarDetallesYAjustarInventario(
+    id_venta,
+    detalles,
+    transaction,
+    idSucursal = null
+  ) {
     const mods = {};
+    const productosAfectados = new Set();
+    const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+      idSucursal,
+      transaction
+    );
 
     for (const det of detalles) {
       const {
@@ -86,10 +167,11 @@ class servicesVenta {
       );
 
       const inv = await Inventario.findOne({
-        where: { id_producto, id_lote },
+        where: { id_producto, id_lote, id_sucursal: idSucursalOperacion },
         transaction,
       });
       if (!inv) throw new Error("Inventario no encontrado para producto/lote");
+      productosAfectados.add(id_producto);
 
       inv.subCantidad = decrementar(
         "subCantidad",
@@ -137,6 +219,10 @@ class servicesVenta {
     for (const { prod, stock, subCantidad, peso } of Object.values(mods)) {
       await prod.update({ stock, subCantidad, peso }, { transaction });
     }
+
+    for (const id_producto of productosAfectados) {
+      await ajustesService.sincronizarStockProducto(id_producto, transaction);
+    }
   }
 
   async actualizarPuntosCliente(clienteId, transaction) {
@@ -148,18 +234,44 @@ class servicesVenta {
   }
 
   async procesarInventario(dataVenta, detalles, id_caja) {
+    const operacionKey = buildOperacionKey(
+      "salida-inventario",
+      dataVenta,
+      detalles,
+      id_caja
+    );
+
+    if (operacionesEnProceso.has(operacionKey)) {
+      throw new Error(
+        "Este movimiento de inventario ya se está procesando. Espere un momento."
+      );
+    }
+
+    if (operacionesProcesadas.has(operacionKey)) {
+      return operacionesProcesadas.get(operacionKey);
+    }
+
+    operacionesEnProceso.add(operacionKey);
+
+    try {
     return await sequelize.transaction(async (t) => {
       const mods = {};
+      const productosAfectados = new Set();
+      const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+        dataVenta?.id_sucursal,
+        t
+      );
 
       for (const det of detalles) {
         const { id_producto, id_lote, cantidad, cantidad_unidad, peso } = det;
 
         const inv = await Inventario.findOne({
-          where: { id_producto, id_lote },
+          where: { id_producto, id_lote, id_sucursal: idSucursalOperacion },
           transaction: t,
         });
         if (!inv)
           throw new Error("Inventario no encontrado para producto/lote");
+        productosAfectados.add(id_producto);
 
         inv.subCantidad = decrementar(
           "subCantidad",
@@ -187,6 +299,7 @@ class servicesVenta {
             subCantidad: cantidad_unidad,
             id_trabajador: dataVenta.id_trabajador,
             lote: id_lote,
+            id_sucursal: idSucursalOperacion,
           },
           { transaction: t }
         );
@@ -222,7 +335,20 @@ class servicesVenta {
       for (const { prod, stock, subCantidad, peso } of Object.values(mods)) {
         await prod.update({ stock, subCantidad, peso }, { transaction: t });
       }
+
+      for (const id_producto of productosAfectados) {
+        await ajustesService.sincronizarStockProducto(id_producto, t);
+      }
+
+      const resultado = { success: true };
+      operacionesProcesadas.set(operacionKey, resultado);
+      setTimeout(() => operacionesProcesadas.delete(operacionKey), 1000 * 60 * 10);
+
+      return resultado;
     });
+    } finally {
+      operacionesEnProceso.delete(operacionKey);
+    }
   }
 
   async anularVenta(ventaDetalles) {
@@ -239,9 +365,17 @@ class servicesVenta {
       const id_trabajador = ventaDetalles[0].id_trabajador;
       const clienteId = ventaDetalles[0].clienteId;
       const total = ventaDetalles[0].total;
+      const ventaOriginal = await Venta.findByPk(id_venta, { transaction: t });
+      const metodoPagoOriginal =
+        ventaDetalles[0].metodo_pago || ventaOriginal?.metodo_pago || "Contado";
+      const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+        ventaDetalles[0].id_sucursal,
+        t
+      );
 
       let totalVenta = 0;
       const mods = {};
+      const productosAfectados = new Set();
 
       for (const det of ventaDetalles) {
         const {
@@ -258,11 +392,12 @@ class servicesVenta {
 
         // Restaurar inventario del lote
         const inv = await Inventario.findOne({
-          where: { id_producto, id_lote },
+          where: { id_producto, id_lote, id_sucursal: idSucursalOperacion },
           transaction: t,
         });
         if (!inv)
           throw new Error("Inventario no encontrado para producto/lote");
+        productosAfectados.add(id_producto);
 
         inv.subCantidad += cantidad_unidad;
         inv.cantidad += cantidad;
@@ -297,26 +432,33 @@ class servicesVenta {
         await prod.update({ stock, subCantidad }, { transaction: t });
       }
 
+      for (const id_producto of productosAfectados) {
+        await ajustesService.sincronizarStockProducto(id_producto, t);
+      }
+
       // Eliminar la venta
       await Venta.destroy({ where: { id_venta }, transaction: t });
 
-      // Actualizar caja y registrar movimiento
-      const caja = await Caja.findByPk(id_caja, { transaction: t });
-      if (!caja) throw new Error(`Caja ${id_caja} no encontrada`);
-      const nuevoMonto = parseFloat(caja.monto_final) - parseFloat(total);
-      await caja.update({ monto_final: nuevoMonto }, { transaction: t });
+      if (metodoPagoOriginal !== "QR") {
+        // Actualizar caja y registrar movimiento
+        const caja = await Caja.findByPk(id_caja, { transaction: t });
+        if (!caja) throw new Error(`Caja ${id_caja} no encontrada`);
+        const nuevoMonto = parseFloat(caja.monto_final) - parseFloat(total);
+        await caja.update({ monto_final: nuevoMonto }, { transaction: t });
 
-      await MovimientoCaja.create(
-        {
-          id_caja,
-          tipo_movimiento: "Retiro",
-          motivo: "Anulación de venta",
-          monto: parseFloat(total),
-          fecha_movimiento: fecha_venta,
-          id_trabajador,
-        },
-        { transaction: t }
-      );
+        await MovimientoCaja.create(
+          {
+            id_caja,
+            tipo_movimiento: "Retiro",
+            motivo: "Anulación de venta",
+            monto: parseFloat(total),
+            fecha_movimiento: fecha_venta,
+            id_trabajador,
+            id_sucursal: idSucursalOperacion,
+          },
+          { transaction: t }
+        );
+      }
 
       // Actualizar puntos del cliente
       const cliente = await Cliente.findByPk(clienteId, { transaction: t });
@@ -329,9 +471,14 @@ class servicesVenta {
     });
   }
 
-  async getAllVentas() {
+  async getAllVentas(id_sucursal = null) {
     try {
-      const ventas = await Venta.findAll();
+      const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+        id_sucursal
+      );
+      const ventas = await Venta.findAll({
+        where: { id_sucursal: idSucursalOperacion },
+      });
       return ventas;
     } catch (error) {
       console.error("Error fetching all ventas:", error);
@@ -339,8 +486,11 @@ class servicesVenta {
     }
   }
 
-  async getVentasDelDia() {
+  async getVentasDelDia(id_sucursal = null) {
     try {
+      const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+        id_sucursal
+      );
       const fechaHoy = DateTime.now().setZone("America/La_Paz").startOf("day");
       const finDia = DateTime.now().setZone("America/La_Paz").endOf("day");
 
@@ -349,6 +499,7 @@ class servicesVenta {
           fecha_venta: {
             [Op.between]: [fechaHoy.toJSDate(), finDia.toJSDate()],
           },
+          id_sucursal: idSucursalOperacion,
         },
         include: [
           {

@@ -1,23 +1,39 @@
 const Caja = require("../models/Caja");
 const MovimientoCaja = require("../models/MovimientoCaja");
 const sequelize = require("../libs/dbConexionORM");
-const { Trabajador } = require("../models");
+const { Trabajador, Sucursal } = require("../models");
+const SucursalService = require("./servicesSucursal");
+
+const sucursalService = new SucursalService();
 
 class servicesCaja {
   constructor() {
     this.sesion = {};
   }
 
-  async abrirCaja(monto_inicial, id_trabajador) {
+  async obtenerIdSucursalOperacion(idSucursal, transaction = null) {
+    if (idSucursal) return Number(idSucursal);
+    const sucursalPrincipal = await sucursalService.obtenerSucursalPrincipal(
+      transaction
+    );
+    return sucursalPrincipal.id_sucursal;
+  }
+
+  async abrirCaja(monto_inicial, id_trabajador, id_sucursal = null) {
     const t = await sequelize.transaction();
 
     try {
+      const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+        id_sucursal,
+        t
+      );
       const nuevaCaja = await Caja.create(
         {
           monto_inicial,
           monto_final: monto_inicial,
           fecha_apertura: new Date(),
           id_trabajador,
+          id_sucursal: idSucursalOperacion,
         },
         { transaction: t }
       );
@@ -30,6 +46,7 @@ class servicesCaja {
           fecha_movimiento: nuevaCaja.fecha_apertura,
           id_trabajador,
           motivo: "Apertura de caja",
+          id_sucursal: idSucursalOperacion,
         },
         { transaction: t }
       );
@@ -42,10 +59,14 @@ class servicesCaja {
     }
   }
 
-  async cerrarCaja(id_caja, id_trabajador) {
+  async cerrarCaja(id_caja, id_trabajador, id_sucursal = null) {
     const t = await sequelize.transaction();
 
     try {
+      const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+        id_sucursal,
+        t
+      );
       const caja = await Caja.findByPk(id_caja);
       if (!caja) {
         throw new Error(`Caja with ID ${id_caja} not found`);
@@ -59,6 +80,7 @@ class servicesCaja {
           fecha_movimiento: new Date(),
           id_trabajador,
           motivo: "Cierre de caja",
+          id_sucursal: idSucursalOperacion,
         },
         { transaction: t }
       );
@@ -74,9 +96,13 @@ class servicesCaja {
     }
   }
 
-  async getLastCaja() {
+  async getLastCaja(id_sucursal = null) {
     try {
+      const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+        id_sucursal
+      );
       const lastCaja = await Caja.findOne({
+        where: { id_sucursal: idSucursalOperacion },
         order: [["id_caja", "DESC"]],
         include: [
           {
@@ -92,6 +118,10 @@ class servicesCaja {
           {
             model: Trabajador,
             as: "trabajadorCierre",
+          },
+          {
+            model: Sucursal,
+            as: "sucursal",
           },
         ],
       });
@@ -115,8 +145,10 @@ class servicesCaja {
           fecha_apertura: lastCaja.fecha_apertura,
           fecha_cierre: lastCaja.fecha_cierre,
           id_trabajador: lastCaja.id_trabajador,
+          id_sucursal: lastCaja.id_sucursal,
           movimientos: lastCaja.movimientos,
           trabajadorCierre: lastCaja.trabajadorCierre,
+          sucursal: lastCaja.sucursal,
         },
       };
     } catch (error) {
@@ -125,9 +157,13 @@ class servicesCaja {
     }
   }
 
-  async getAllCajas() {
+  async getAllCajas(id_sucursal = null) {
     try {
+      const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+        id_sucursal
+      );
       const cajas = await Caja.findAll({
+        where: { id_sucursal: idSucursalOperacion },
         order: [["id_caja", "DESC"]],
         include: [
           {
@@ -147,6 +183,10 @@ class servicesCaja {
           {
             model: Trabajador,
             as: "trabajadorCierre",
+          },
+          {
+            model: Sucursal,
+            as: "sucursal",
           },
         ],
       });

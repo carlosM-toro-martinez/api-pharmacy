@@ -9,6 +9,8 @@ const router = require("./routes");
 const Administrador = db.Administrador;
 const Permiso = db.Permiso;
 const passport = require("passport");
+const requestLogger = require("./middlewares/requestLogger");
+const SucursalService = require("./services/servicesSucursal");
 
 require("./middlewares/passportConfig")(passport);
 
@@ -18,6 +20,14 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(passport.initialize());
+
+// Minimal request logger (adds X-Request-Id and X-Body-Hash headers and logs)
+app.use(requestLogger);
+
+// Guard to avoid double responses from same handler (logs and ignores second attempts)
+const singleResponseGuard = require("./middlewares/singleResponseGuard");
+app.use(singleResponseGuard);
+
 router(app);
 
 // app.use(express.static(path.join(__dirname, "dist")));
@@ -32,12 +42,17 @@ router(app);
 const PORT = process.env.PORT || 3000;
 
 async function createInitialData() {
+  const sucursalService = new SucursalService();
+  await sucursalService.inicializarSucursalPrincipal();
+
   const permisos = [
     { nombre: "reportes" },
     { nombre: "gestion de compras" },
     { nombre: "movimientos de caja" },
     { nombre: "inventario" },
     { nombre: "gestionar trabajadores" },
+    { nombre: "ajustes" },
+    { nombre: "sucursales" },
   ];
 
   for (const permiso of permisos) {

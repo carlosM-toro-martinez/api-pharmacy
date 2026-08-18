@@ -4,6 +4,45 @@ const MetodoVenta = require("../models/MetodoVenta");
 const Inventario = require("../models/Inventario");
 const { Op } = require("sequelize");
 
+const toNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const calcularStockProductoDesdeInventario = (producto) => {
+  const inventarios = producto?.inventarios || [];
+  return inventarios.reduce(
+    (totales, inventario) => ({
+      stock: totales.stock + toNumber(inventario.cantidad),
+      subCantidad: totales.subCantidad + toNumber(inventario.subCantidad),
+      peso: totales.peso + toNumber(inventario.peso),
+    }),
+    { stock: 0, subCantidad: 0, peso: 0 }
+  );
+};
+
+const loteConProductoActualizado = (lote) => {
+  const plainLote = lote.toJSON();
+  if (!plainLote.producto) return plainLote;
+
+  const stockInventario = calcularStockProductoDesdeInventario(
+    plainLote.producto
+  );
+
+  return {
+    ...plainLote,
+    producto: {
+      ...plainLote.producto,
+      stock: stockInventario.stock,
+      subCantidad: stockInventario.subCantidad,
+      peso: stockInventario.peso,
+      totalCantidad: stockInventario.stock,
+      totalSubCantidad: stockInventario.subCantidad,
+      totalPeso: stockInventario.peso,
+    },
+  };
+};
+
 class servicesLote {
   constructor() {
     this.sesion = {};
@@ -18,6 +57,12 @@ class servicesLote {
           {
             model: Producto,
             as: "producto",
+            where: {
+              activo: {
+                [Op.ne]: false,
+              },
+            },
+            required: true,
             attributes: [
               "nombre",
               "codigo_barra",
@@ -26,20 +71,27 @@ class servicesLote {
               "peso",
               "subCantidad",
             ],
-            include: {
-              model: MetodoVenta,
-              as: "metodosVenta",
-              attributes: [
-                "id_metodo_venta",
-                "descripcion",
-                "cantidad_por_metodo",
-                "precio",
-              ],
-            },
+            include: [
+              {
+                model: MetodoVenta,
+                as: "metodosVenta",
+                attributes: [
+                  "id_metodo_venta",
+                  "descripcion",
+                  "cantidad_por_metodo",
+                  "precio",
+                ],
+              },
+              {
+                model: Inventario,
+                as: "inventarios",
+                attributes: ["cantidad", "subCantidad", "peso"],
+              },
+            ],
           },
         ],
       });
-      return lotes;
+      return lotes.map(loteConProductoActualizado);
     } catch (error) {
       console.error("Error fetching all lotes:", error);
       throw error;
@@ -56,6 +108,12 @@ class servicesLote {
           {
             model: Producto,
             as: "producto",
+            where: {
+              activo: {
+                [Op.ne]: false,
+              },
+            },
+            required: true,
             attributes: [
               "nombre",
               "codigo_barra",
@@ -98,7 +156,7 @@ class servicesLote {
       // 3) Si efectivamente quieres devolver sólo los “top 20” que quedan tras filtrar:
       const top20 = lotesConStock.slice(0, 500);
 
-      return top20;
+      return top20.map(loteConProductoActualizado);
     } catch (error) {
       console.error("Error al obtener los 20 lotes por vencer:", error);
       throw error;

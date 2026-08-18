@@ -7,7 +7,9 @@ const productService = new ProductService();
 // Ruta GET para obtener todos los productos
 route.get("/", async (req, res) => {
   try {
-    const products = await productService.getAllProducts();
+    const products = await productService.getAllProducts({
+      id_sucursal: req.query.id_sucursal || req.headers["x-sucursal-id"],
+    });
     res.json(products);
   } catch (error) {
     console.error("Error fetching products:", error);
@@ -53,8 +55,25 @@ route.post("/", async (req, res) => {
 // Ruta POST para crear un nuevo producto
 route.post("/buy", async (req, res) => {
   try {
+    const id_sucursal = req.headers["x-sucursal-id"];
+    const payload = {
+      ...req.body,
+      items: Array.isArray(req.body?.items)
+        ? req.body.items.map((item) => ({
+            ...item,
+            id_sucursal: item.id_sucursal || id_sucursal,
+            productUpdateData: {
+              ...(item.productUpdateData || {}),
+              id_sucursal:
+                item.productUpdateData?.id_sucursal ||
+                item.id_sucursal ||
+                id_sucursal,
+            },
+          }))
+        : req.body?.items,
+    };
     const newProduct =
-      await productService.createDetalleCompraYLoteAndUpdateProduct(req.body);
+      await productService.createDetalleCompraYLoteAndUpdateProduct(payload);
 
     res.status(201).json(newProduct);
   } catch (error) {
@@ -68,7 +87,10 @@ route.put("/:id", async (req, res) => {
   try {
     const updatedProduct = await productService.updateProduct(
       req.params.id,
-      req.body
+      {
+        ...req.body,
+        id_sucursal: req.body.id_sucursal || req.headers["x-sucursal-id"],
+      }
     );
     res.json(updatedProduct);
   } catch (error) {

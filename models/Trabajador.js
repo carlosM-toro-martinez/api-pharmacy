@@ -1,6 +1,7 @@
 const { Model, DataTypes } = require("sequelize");
 const sequelize = require("../libs/dbConexionORM");
 const Rol = require("./Rol");
+const Sucursal = require("./Sucursal");
 
 class Trabajador extends Model {}
 
@@ -43,6 +44,14 @@ Trabajador.init(
     estado: {
       type: DataTypes.BOOLEAN,
       defaultValue: true,
+    },
+    id_sucursal: {
+      type: DataTypes.INTEGER,
+      references: {
+        model: Sucursal,
+        key: "id_sucursal",
+      },
+      allowNull: true,
     },
   },
   {

@@ -7,15 +7,19 @@ const {
   Rol,
   Permiso,
   RolPermiso,
+  Sucursal,
 } = require("../models");
+const SucursalService = require("./servicesSucursal");
 
 const jwtSecret = process.env.JWT_SECRET || "your_jwt_secret";
 const saltRounds = 10;
+const sucursalService = new SucursalService();
 
-const generateToken = (user, tipo) => {
+const generateToken = (user, tipo, sucursal = null) => {
   const payload = {
     id: user.id_trabajador || user.id_administrador,
     tipo,
+    id_sucursal: sucursal?.id_sucursal || null,
   };
   return jwt.sign(payload, jwtSecret, { expiresIn: "8h" });
 };
@@ -43,6 +47,11 @@ const loginUser = async (req, res) => {
               },
             ],
           },
+          {
+            model: Sucursal,
+            as: "sucursal",
+            attributes: ["id_sucursal", "nombre", "dominio", "es_principal"],
+          },
         ],
       });
     } else if (tipo === "administrador") {
@@ -60,11 +69,17 @@ const loginUser = async (req, res) => {
       return { error: "Contraseña incorrecta" };
     }
 
-    const token = generateToken(user, tipo);
+    const sucursal = await sucursalService.resolverSucursalSesion({
+      req,
+      trabajador: tipo === "trabajador" ? user : null,
+    });
+
+    const token = generateToken(user, tipo, sucursal);
 
     return {
       token,
       user,
+      sucursal,
     };
   } catch (error) {
     return { error: error.message };

@@ -6,7 +6,9 @@ const inventarioService = new InventarioService();
 
 route.get("/", async (req, res) => {
   try {
-    const inventarios = await inventarioService.getAllProductosConInventarios();
+    const inventarios = await inventarioService.getAllProductosConInventarios({
+      id_sucursal: req.query.id_sucursal || req.headers["x-sucursal-id"],
+    });
     res.json(inventarios);
   } catch (error) {
     console.error("Error fetching inventarios:", error);

@@ -14,9 +14,63 @@ const {
   Caja,
   Inventario,
 } = require("../models");
+const SucursalService = require("./servicesSucursal");
+
+const sucursalService = new SucursalService();
+
+const toNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const calcularStockInventario = (producto) => {
+  const inventarios = producto?.inventarios || [];
+  return inventarios.reduce(
+    (totales, inventario) => ({
+      stock: totales.stock + toNumber(inventario.cantidad),
+      subCantidad: totales.subCantidad + toNumber(inventario.subCantidad),
+      peso: totales.peso + toNumber(inventario.peso),
+    }),
+    { stock: 0, subCantidad: 0, peso: 0 }
+  );
+};
+
+const actualizarProductoDetalleConInventario = (detalle) => {
+  if (!detalle.producto) return detalle;
+
+  const stockInventario = calcularStockInventario(detalle.producto);
+  return {
+    ...detalle,
+    producto: {
+      ...detalle.producto,
+      stock: stockInventario.stock,
+      subCantidad: stockInventario.subCantidad,
+      peso: stockInventario.peso,
+      totalCantidad: stockInventario.stock,
+      totalSubCantidad: stockInventario.subCantidad,
+      totalPeso: stockInventario.peso,
+    },
+  };
+};
+
+const ventaConProductosActualizados = (venta) => {
+  const plainVenta = venta.toJSON();
+  return {
+    ...plainVenta,
+    detallesVenta: (plainVenta.detallesVenta || []).map(
+      actualizarProductoDetalleConInventario
+    ),
+  };
+};
 
 class servicesReporte {
   constructor() {}
+
+  async obtenerIdSucursalOperacion(idSucursal) {
+    if (idSucursal) return Number(idSucursal);
+    const sucursalPrincipal = await sucursalService.obtenerSucursalPrincipal();
+    return sucursalPrincipal.id_sucursal;
+  }
 
   async getLotesConDetalleCompra(idInicio, idFin) {
     console.log(idInicio, idFin);
@@ -143,13 +197,17 @@ class servicesReporte {
     }
   }
 
-  async getMovimientosCaja(idInicio, idFin) {
+  async getMovimientosCaja(idInicio, idFin, id_sucursal = null) {
     try {
+      const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+        id_sucursal
+      );
       const cajas = await Caja.findAll({
         where: {
           id_caja: {
             [Op.between]: [idInicio, idFin],
           },
+          id_sucursal: idSucursalOperacion,
         },
         include: [
           {
@@ -176,13 +234,17 @@ class servicesReporte {
     }
   }
 
-  async getVentas(idInicio, idFin) {
+  async getVentas(idInicio, idFin, id_sucursal = null) {
     try {
+      const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+        id_sucursal
+      );
       const ventas = await Venta.findAll({
         where: {
           id_venta: {
             [Op.between]: [idInicio, idFin],
           },
+          id_sucursal: idSucursalOperacion,
         },
         include: [
           {
@@ -202,6 +264,11 @@ class servicesReporte {
               {
                 model: Producto,
                 as: "producto",
+                include: {
+                  model: Inventario,
+                  as: "inventarios",
+                  attributes: ["cantidad", "subCantidad", "peso"],
+                },
               },
               {
                 model: Lote,
@@ -217,16 +284,20 @@ class servicesReporte {
           },
         ],
       });
-      return ventas;
+      return ventas.map(ventaConProductosActualizados);
     } catch (error) {
       console.error("Error fetching ventas:", error);
       throw error;
     }
   }
 
-  async getVentasClientes() {
+  async getVentasClientes(id_sucursal = null) {
     try {
+      const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+        id_sucursal
+      );
       const ventas = await Venta.findAll({
+        where: { id_sucursal: idSucursalOperacion },
         attributes: [
           "id_cliente",
           [Sequelize.fn("SUM", Sequelize.col("total")), "total_gastado"],
@@ -302,13 +373,17 @@ class servicesReporte {
     }
   }
 
-  async getVentasPorPagar() {
+  async getVentasPorPagar(id_sucursal = null) {
     try {
+      const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+        id_sucursal
+      );
       const ventas = await Venta.findAll({
         where: {
           metodo_pago: {
             [Op.ne]: "Contado", // Filtrar donde metodo_pago no sea "Contado"
           },
+          id_sucursal: idSucursalOperacion,
         },
         include: [
           {
@@ -328,7 +403,18 @@ class servicesReporte {
               {
                 model: Producto,
                 as: "producto",
-                attributes: ["nombre"],
+                attributes: [
+                  "id_producto",
+                  "nombre",
+                  "stock",
+                  "subCantidad",
+                  "peso",
+                ],
+                include: {
+                  model: Inventario,
+                  as: "inventarios",
+                  attributes: ["cantidad", "subCantidad", "peso"],
+                },
               },
               {
                 model: Lote,
@@ -344,7 +430,7 @@ class servicesReporte {
           },
         ],
       });
-      return ventas;
+      return ventas.map(ventaConProductosActualizados);
     } catch (error) {
       console.error("Error fetching ventas:", error);
       throw error;
@@ -504,9 +590,24 @@ class servicesReporte {
     return historial;
   }
 
-  async obtenerProductosMasVendidos() {
+  async obtenerProductosMasVendidos(id_sucursal = null) {
+    const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+      id_sucursal
+    );
     const productos = await Producto.findAll({
+      where: {
+        activo: {
+          [Op.ne]: false,
+        },
+      },
       include: [
+        {
+          model: Inventario,
+          as: "inventarios",
+          where: { id_sucursal: idSucursalOperacion },
+          required: false,
+          attributes: ["cantidad", "subCantidad", "peso"],
+        },
         {
           model: DetalleVenta,
           as: "detallesVenta",
@@ -518,24 +619,52 @@ class servicesReporte {
             "peso",
             "precio_unitario",
           ],
+          include: [
+            {
+              model: Venta,
+              as: "venta",
+              attributes: ["id_venta", "id_sucursal"],
+              where: { id_sucursal: idSucursalOperacion },
+              required: true,
+            },
+          ],
         },
       ],
     });
 
     const productosConVentas = productos
       .map((producto) => {
-        const totalVendidas = producto.detallesVenta.reduce(
+        const plainProduct = producto.toJSON();
+        const inventarios = plainProduct.inventarios || [];
+        const detallesVenta = plainProduct.detallesVenta || [];
+        const stockInventario = inventarios.reduce(
+          (totales, inventario) => ({
+            stock: totales.stock + toNumber(inventario.cantidad),
+            subCantidad:
+              totales.subCantidad + toNumber(inventario.subCantidad),
+            peso: totales.peso + toNumber(inventario.peso),
+          }),
+          { stock: 0, subCantidad: 0, peso: 0 }
+        );
+
+        const totalVendidas = detallesVenta.reduce(
           (acc, detalle) => acc + (detalle.cantidad || 0),
           0
         );
 
-        const totalUnidadesVendidas = producto.detallesVenta.reduce(
+        const totalUnidadesVendidas = detallesVenta.reduce(
           (acc, detalle) => acc + (detalle.subCantidad || 0),
           0
         );
 
         return {
-          ...producto.toJSON(),
+          ...plainProduct,
+          stock: stockInventario.stock,
+          subCantidad: stockInventario.subCantidad,
+          peso: stockInventario.peso,
+          totalCantidad: stockInventario.stock,
+          totalSubCantidad: stockInventario.subCantidad,
+          totalPeso: stockInventario.peso,
           totalVendidas,
           totalUnidadesVendidas,
         };

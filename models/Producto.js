@@ -39,6 +39,11 @@ Producto.init(
       allowNull: false,
       defaultValue: false,
     },
+    activo: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
   },
   {
     sequelize,

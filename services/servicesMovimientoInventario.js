@@ -1,4 +1,18 @@
 const MovimientoInventario = require("../models/MovimientoInventario");
+const Sucursal = require("../models/Sucursal");
+
+const obtenerIdSucursalPrincipal = async (transaction = null) => {
+  const [sucursal] = await Sucursal.findOrCreate({
+    where: { nombre: "Sucursal principal" },
+    defaults: {
+      direccion: "Principal",
+      es_principal: true,
+      activo: true,
+    },
+    transaction,
+  });
+  return sucursal.id_sucursal;
+};
 
 class servicesMovimientoInventario {
   constructor() {
@@ -34,9 +48,14 @@ class servicesMovimientoInventario {
 
   async createMovimientoInventario(data, transaction = null) {
     try {
-      const newMovimiento = await MovimientoInventario.create(data, {
-        transaction,
-      });
+      const idSucursal =
+        data?.id_sucursal || (await obtenerIdSucursalPrincipal(transaction));
+      const newMovimiento = await MovimientoInventario.create(
+        { ...data, id_sucursal: idSucursal },
+        {
+          transaction,
+        }
+      );
       return newMovimiento;
     } catch (error) {
       console.error("Error creating movimientoInventario:", error);

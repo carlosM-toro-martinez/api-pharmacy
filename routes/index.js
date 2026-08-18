@@ -19,6 +19,8 @@ const routesReporte = require("./routesReporte");
 const routesLogin = require("./routesLogin");
 const routesCategoria = require("./routesCategoria");
 const routesMetodoVenta = require("./routesMetodoVenta");
+const routesAjustes = require("./routesAjustes");
+const routesSucursal = require("./routesSucursal");
 
 function router(app) {
   const routes = express.Router();
@@ -42,6 +44,8 @@ function router(app) {
   routes.use("/reportes", routesReporte);
   routes.use("/categorias", routesCategoria);
   routes.use("/metodo-ventas", routesMetodoVenta);
+  routes.use("/ajustes", routesAjustes);
+  routes.use("/sucursales", routesSucursal);
   routes.use("/login", routesLogin);
 }
 

@@ -11,6 +11,7 @@ const {
   Producto,
   Proveedor,
   Cliente,
+  Sucursal,
 } = require("../models");
 const { Op } = require("sequelize");
 
@@ -23,11 +24,18 @@ class servicesTrabajador {
   async getAllTrabajadores() {
     try {
       const trabajadores = await Trabajador.findAll({
-        include: {
-          model: Rol,
-          as: "rol",
-          attributes: ["id_rol", "nombre"],
-        },
+        include: [
+          {
+            model: Rol,
+            as: "rol",
+            attributes: ["id_rol", "nombre"],
+          },
+          {
+            model: Sucursal,
+            as: "sucursal",
+            attributes: ["id_sucursal", "nombre", "dominio", "es_principal"],
+          },
+        ],
       });
       return trabajadores;
     } catch (error) {
@@ -83,7 +91,15 @@ class servicesTrabajador {
   // Método GET para obtener un trabajador por id_trabajador
   async getTrabajador(id_trabajador) {
     try {
-      const trabajador = await Trabajador.findByPk(id_trabajador);
+      const trabajador = await Trabajador.findByPk(id_trabajador, {
+        include: [
+          {
+            model: Sucursal,
+            as: "sucursal",
+            attributes: ["id_sucursal", "nombre", "dominio", "es_principal"],
+          },
+        ],
+      });
       if (!trabajador) {
         throw new Error(`Trabajador with ID ${id_trabajador} not found`);
       }
@@ -107,6 +123,7 @@ class servicesTrabajador {
         username,
         password,
         id_rol,
+        id_sucursal,
       } = data;
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
@@ -120,6 +137,7 @@ class servicesTrabajador {
         id_rol,
         username,
         password: hashedPassword,
+        id_sucursal: id_sucursal || null,
       });
 
       return newTrabajador;
@@ -136,7 +154,14 @@ class servicesTrabajador {
       if (!trabajador) {
         throw new Error(`Trabajador with ID ${id_trabajador} not found`);
       }
-      await trabajador.update(data);
+      const payload = { ...data };
+      if (payload.password) {
+        const salt = await bcrypt.genSalt(10);
+        payload.password = await bcrypt.hash(payload.password, salt);
+      } else {
+        delete payload.password;
+      }
+      await trabajador.update(payload);
       return trabajador;
     } catch (error) {
       console.error("Error updating trabajador:", error);

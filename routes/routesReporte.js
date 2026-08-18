@@ -36,7 +36,8 @@ route.get("/caja/:idInicio/:idFin", async (req, res) => {
   try {
     const movimientos = await reporteService.getMovimientosCaja(
       idInicio,
-      idFin
+      idFin,
+      req.headers["x-sucursal-id"]
     );
     res.json(movimientos);
   } catch (error) {
@@ -61,7 +62,11 @@ route.get("/ventas/:idInicio/:idFin", async (req, res) => {
   const { idInicio, idFin } = req.params;
 
   try {
-    const ventas = await reporteService.getVentas(idInicio, idFin);
+    const ventas = await reporteService.getVentas(
+      idInicio,
+      idFin,
+      req.headers["x-sucursal-id"]
+    );
     res.json(ventas);
   } catch (error) {
     console.error("Error fetching ventas:", error);
@@ -71,7 +76,9 @@ route.get("/ventas/:idInicio/:idFin", async (req, res) => {
 
 route.get("/ventas/clientes", async (req, res) => {
   try {
-    const ventas = await reporteService.getVentasClientes();
+    const ventas = await reporteService.getVentasClientes(
+      req.headers["x-sucursal-id"]
+    );
     res.json(ventas);
   } catch (error) {
     console.error("Error fetching ventas:", error);
@@ -91,7 +98,9 @@ route.get("/ventas/clientes_por_puntos", async (req, res) => {
 
 route.get("/ventas/por_pagar", async (req, res) => {
   try {
-    const ventas = await reporteService.getVentasPorPagar();
+    const ventas = await reporteService.getVentasPorPagar(
+      req.headers["x-sucursal-id"]
+    );
     res.json(ventas);
   } catch (error) {
     console.error("Error fetching ventas:", error);
@@ -129,7 +138,9 @@ route.get("/producto/:id_producto/historial", async (req, res) => {
 
 route.get("/mas-vendidos", async (req, res) => {
   try {
-    const productos = await reporteService.obtenerProductosMasVendidos();
+    const productos = await reporteService.obtenerProductosMasVendidos(
+      req.headers["x-sucursal-id"]
+    );
     res.json({ productos });
   } catch (error) {
     console.error("Error al obtener productos más vendidos:", error);

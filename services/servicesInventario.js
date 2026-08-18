@@ -4,21 +4,53 @@ const {
   MetodoVenta,
   Proveedor,
   DetalleCompra,
+  Sucursal,
 } = require("../models");
+const { Op } = require("sequelize");
 const Inventario = require("../models/Inventario");
+
+const toNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const obtenerIdSucursalPrincipal = async (transaction = null) => {
+  const [sucursal] = await Sucursal.findOrCreate({
+    where: { nombre: "Sucursal principal" },
+    defaults: {
+      direccion: "Principal",
+      es_principal: true,
+      activo: true,
+    },
+    transaction,
+  });
+  return sucursal.id_sucursal;
+};
 
 class servicesInventario {
   constructor() {
     this.sesion = {};
   }
 
-  async getAllProductosConInventarios() {
+  async getAllProductosConInventarios(filters = {}) {
     try {
+      const idSucursal = Number(filters?.id_sucursal);
+      const inventarioWhere = Number.isFinite(idSucursal) && idSucursal > 0
+        ? { id_sucursal: idSucursal }
+        : {};
+
       const productos = await Producto.findAll({
+        where: {
+          activo: {
+            [Op.ne]: false,
+          },
+        },
         include: [
           {
             model: Inventario,
             as: "inventarios",
+            where: inventarioWhere,
+            required: Number.isFinite(idSucursal) && idSucursal > 0,
             attributes: [
               "id_inventario",
               "cantidad",
@@ -26,8 +58,14 @@ class servicesInventario {
               "peso",
               "fecha_actualizacion",
               "id_trabajador",
+              "id_sucursal",
             ],
             include: [
+              {
+                model: Sucursal,
+                as: "sucursal",
+                attributes: ["id_sucursal", "nombre", "es_principal"],
+              },
               {
                 model: Lote,
                 as: "lote",
@@ -83,7 +121,29 @@ class servicesInventario {
         order: [["id_producto", "ASC"]],
       });
 
-      return productos;
+      return productos.map((producto) => {
+        const plainProduct = producto.toJSON();
+        const inventarios = plainProduct.inventarios || [];
+        const totalesInventario = inventarios.reduce(
+          (totales, inventario) => ({
+            stock: totales.stock + toNumber(inventario.cantidad),
+            subCantidad:
+              totales.subCantidad + toNumber(inventario.subCantidad),
+            peso: totales.peso + toNumber(inventario.peso),
+          }),
+          { stock: 0, subCantidad: 0, peso: 0 }
+        );
+
+        return {
+          ...plainProduct,
+          stock: totalesInventario.stock,
+          subCantidad: totalesInventario.subCantidad,
+          peso: totalesInventario.peso,
+          totalCantidad: totalesInventario.stock,
+          totalSubCantidad: totalesInventario.subCantidad,
+          totalPeso: totalesInventario.peso,
+        };
+      });
     } catch (error) {
       console.error(
         "Error fetching productos with inventarios and lotes:",
@@ -108,7 +168,12 @@ class servicesInventario {
 
   async createInventario(data, transaction = null) {
     try {
-      const newInventario = await Inventario.create(data, { transaction });
+      const idSucursal =
+        data?.id_sucursal || (await obtenerIdSucursalPrincipal(transaction));
+      const newInventario = await Inventario.create(
+        { ...data, id_sucursal: idSucursal },
+        { transaction }
+      );
       return newInventario;
     } catch (error) {
       console.error("Error creating inventario:", error);

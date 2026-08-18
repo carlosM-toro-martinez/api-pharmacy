@@ -21,6 +21,7 @@ const Reporte = require("./Reporte");
 const Categoria = require("./Categoria");
 const MetodoVenta = require("./MetodoVenta");
 const Garantia = require("./Garantia");
+const Sucursal = require("./Sucursal");
 
 // Asociación DetalleVenta -> Lote
 DetalleVenta.belongsTo(Lote, {
@@ -88,6 +89,16 @@ Rol.hasMany(Trabajador, {
   as: "trabajadores",
 });
 
+// Trabajador - Sucursal
+Trabajador.belongsTo(Sucursal, {
+  foreignKey: "id_sucursal",
+  as: "sucursal",
+});
+Sucursal.hasMany(Trabajador, {
+  foreignKey: "id_sucursal",
+  as: "trabajadores",
+});
+
 // Inventario - Producto
 Inventario.belongsTo(Producto, {
   foreignKey: "id_producto",
@@ -105,6 +116,16 @@ Inventario.belongsTo(Lote, {
 });
 Lote.hasMany(Inventario, {
   foreignKey: "id_lote",
+  as: "inventarios",
+});
+
+// Inventario - Sucursal
+Inventario.belongsTo(Sucursal, {
+  foreignKey: "id_sucursal",
+  as: "sucursal",
+});
+Sucursal.hasMany(Inventario, {
+  foreignKey: "id_sucursal",
   as: "inventarios",
 });
 
@@ -149,6 +170,16 @@ Trabajador.hasMany(Caja, {
   as: "cajasCierre",
 });
 
+// Caja - Sucursal
+Caja.belongsTo(Sucursal, {
+  foreignKey: "id_sucursal",
+  as: "sucursal",
+});
+Sucursal.hasMany(Caja, {
+  foreignKey: "id_sucursal",
+  as: "cajas",
+});
+
 // MovimientoCaja - Caja
 MovimientoCaja.belongsTo(Caja, {
   foreignKey: "id_caja",
@@ -167,6 +198,16 @@ MovimientoCaja.belongsTo(Trabajador, {
 Trabajador.hasMany(MovimientoCaja, {
   foreignKey: "id_trabajador",
   as: "movimientosRealizados",
+});
+
+// MovimientoCaja - Sucursal
+MovimientoCaja.belongsTo(Sucursal, {
+  foreignKey: "id_sucursal",
+  as: "sucursal",
+});
+Sucursal.hasMany(MovimientoCaja, {
+  foreignKey: "id_sucursal",
+  as: "movimientosCaja",
 });
 
 // Categoria - Producto (Uno a Muchos)
@@ -201,6 +242,20 @@ Trabajador.hasMany(MovimientoInventario, {
   as: "movimientosInventarioRealizados",
 });
 
+// MovimientoInventario - Sucursal
+MovimientoInventario.belongsTo(Sucursal, {
+  foreignKey: "id_sucursal",
+  as: "sucursal",
+});
+MovimientoInventario.belongsTo(Sucursal, {
+  foreignKey: "id_sucursal_destino",
+  as: "sucursalDestino",
+});
+Sucursal.hasMany(MovimientoInventario, {
+  foreignKey: "id_sucursal",
+  as: "movimientosInventario",
+});
+
 // DetalleCompra - Trabajador (Muchos a Uno)
 DetalleCompra.belongsTo(Trabajador, {
   foreignKey: "id_trabajador",
@@ -219,6 +274,16 @@ Venta.belongsTo(Trabajador, {
 Trabajador.hasMany(Venta, {
   foreignKey: "id_trabajador",
   as: "ventasRealizadas",
+});
+
+// Venta - Sucursal
+Venta.belongsTo(Sucursal, {
+  foreignKey: "id_sucursal",
+  as: "sucursal",
+});
+Sucursal.hasMany(Venta, {
+  foreignKey: "id_sucursal",
+  as: "ventas",
 });
 
 // Venta - Producto (Uno a Muchos a través de DetalleVenta)
@@ -270,4 +335,5 @@ module.exports = {
   Reporte,
   Categoria,
   MetodoVenta,
+  Sucursal,
 };

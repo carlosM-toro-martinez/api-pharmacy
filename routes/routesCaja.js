@@ -7,7 +7,11 @@ const cajaService = new CajaService();
 route.post("/abrir", async (req, res) => {
   try {
     const { monto_inicial, id_trabajador } = req.body;
-    const nuevaCaja = await cajaService.abrirCaja(monto_inicial, id_trabajador);
+    const nuevaCaja = await cajaService.abrirCaja(
+      monto_inicial,
+      id_trabajador,
+      req.headers["x-sucursal-id"] || req.body.id_sucursal
+    );
     res.status(201).json(nuevaCaja);
   } catch (error) {
     console.error("Error opening caja:", error);
@@ -18,7 +22,11 @@ route.post("/abrir", async (req, res) => {
 route.post("/cerrar", async (req, res) => {
   try {
     const { id_caja, id_trabajador } = req.body;
-    const cajaCerrada = await cajaService.cerrarCaja(id_caja, id_trabajador);
+    const cajaCerrada = await cajaService.cerrarCaja(
+      id_caja,
+      id_trabajador,
+      req.headers["x-sucursal-id"] || req.body.id_sucursal
+    );
     res.status(200).json(cajaCerrada);
   } catch (error) {
     console.error("Error closing caja:", error);
@@ -28,7 +36,7 @@ route.post("/cerrar", async (req, res) => {
 
 route.get("/", async (req, res) => {
   try {
-    const cajas = await cajaService.getLastCaja();
+    const cajas = await cajaService.getLastCaja(req.headers["x-sucursal-id"]);
 
     if (cajas.length === 0) {
       return res.json({});
@@ -43,7 +51,7 @@ route.get("/", async (req, res) => {
 
 route.get("/all", async (req, res) => {
   try {
-    const cajas = await cajaService.getAllCajas();
+    const cajas = await cajaService.getAllCajas(req.headers["x-sucursal-id"]);
     res.json(cajas);
   } catch (error) {
     console.error("Error fetching cajas:", error);

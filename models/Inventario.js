@@ -3,6 +3,7 @@ const sequelize = require("../libs/dbConexionORM");
 const Producto = require("./Producto");
 const Lote = require("./Lote");
 const Trabajador = require("./Trabajador");
+const Sucursal = require("./Sucursal");
 
 class Inventario extends Model {}
 
@@ -41,6 +42,14 @@ Inventario.init(
         model: Trabajador,
         key: "id_trabajador",
       },
+    },
+    id_sucursal: {
+      type: DataTypes.INTEGER,
+      references: {
+        model: Sucursal,
+        key: "id_sucursal",
+      },
+      allowNull: true,
     },
   },
   {
