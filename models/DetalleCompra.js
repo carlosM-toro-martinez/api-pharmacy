@@ -46,12 +46,34 @@ DetalleCompra.init(
         key: "id_trabajador",
       },
     },
+    // id_proveedor ya existe y representa la linea/marca del producto
+    // (ej. el laboratorio). Esto es distinto: la distribuidora que emitio
+    // la factura de la compra y el numero de esa factura.
+    id_proveedor_factura: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: Proveedor,
+        key: "id_proveedor",
+      },
+    },
+    numero_factura: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
   },
   {
     sequelize,
     modelName: "DetalleCompra",
     tableName: "DetalleCompra",
     timestamps: false,
+    indexes: [
+      { fields: ["id_producto"] },
+      { fields: ["id_proveedor"] },
+      { fields: ["fecha_compra"] },
+      { fields: ["id_proveedor_factura"] },
+      { fields: ["numero_factura"] },
+    ],
   }
 );
 

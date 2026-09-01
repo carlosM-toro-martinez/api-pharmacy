@@ -8,10 +8,28 @@ route.get("/", async (req, res) => {
   try {
     const inventarios = await inventarioService.getAllProductosConInventarios({
       id_sucursal: req.query.id_sucursal || req.headers["x-sucursal-id"],
+      transferencia: req.query.transferencia === "true",
+      q: req.query.q,
+      limit: req.query.limit,
     });
     res.json(inventarios);
   } catch (error) {
     console.error("Error fetching inventarios:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+route.get("/buscar-sucursales", async (req, res) => {
+  try {
+    const resultados = await inventarioService.buscarStockPorSucursales({
+      q: req.query.q,
+      excluir_sucursal:
+        req.query.excluir_sucursal || req.headers["x-sucursal-id"],
+      limit: req.query.limit,
+    });
+    res.json(resultados);
+  } catch (error) {
+    console.error("Error buscando stock en otras sucursales:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });

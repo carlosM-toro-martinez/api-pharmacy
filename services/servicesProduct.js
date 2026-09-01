@@ -1,5 +1,4 @@
-const { Sequelize } = require("sequelize");
-const { Op } = require("sequelize");
+const { Sequelize, Op, QueryTypes } = require("sequelize");
 const Producto = require("../models/Producto");
 const Inventario = require("../models/Inventario");
 const Lote = require("../models/Lote");
@@ -8,6 +7,7 @@ const InventarioService = require("./servicesInventario");
 const AjustesService = require("./servicesAjustes");
 const sequelize = require("../libs/dbConexionORM");
 const { DetalleCompra, MovimientoInventario, Proveedor } = require("../models");
+const { getNowLapaz } = require("../utils/dateUtils");
 
 const movimientoInventarioService = new MovimientoInventarioService();
 const inventarioService = new InventarioService();
@@ -40,6 +40,10 @@ class servicesProducto {
 
   async getAllProducts(filters = {}) {
     try {
+      if (filters?.simple) {
+        return await this.getProductsSimple(filters);
+      }
+
       const idSucursal = Number(filters?.id_sucursal);
       const inventarioWhere =
         Number.isFinite(idSucursal) && idSucursal > 0
@@ -52,16 +56,23 @@ class servicesProducto {
           },
         },
         include: [
-          {
-            model: Lote,
-            as: "lotes",
-          },
+          ...(Number.isFinite(idSucursal) && idSucursal > 0
+            ? []
+            : [{ model: Lote, as: "lotes" }]),
           {
             model: Inventario,
             as: "inventarios",
             where: inventarioWhere,
-            required: false,
-            attributes: ["cantidad", "subCantidad", "peso"],
+            required: Number.isFinite(idSucursal) && idSucursal > 0,
+            attributes: [
+              "id_inventario",
+              "id_producto",
+              "id_lote",
+              "cantidad",
+              "subCantidad",
+              "peso",
+              "id_sucursal",
+            ],
           },
         ],
         order: [["id_producto", "DESC"]],
@@ -89,6 +100,67 @@ class servicesProducto {
       console.error("Error fetching all products:", error);
       throw error;
     }
+  }
+
+  async getProductsSimple(filters = {}) {
+    const busqueda = String(filters?.q || "").trim();
+    const limit = Math.min(Math.max(Number(filters?.limit) || 100, 1), 3000);
+    const replacements = { limit };
+    const filtrosBusqueda = [];
+
+    if (busqueda) {
+      replacements.busqueda = `%${busqueda.toLowerCase()}%`;
+      filtrosBusqueda.push(`
+        AND (
+          LOWER(p."nombre") LIKE :busqueda
+          OR LOWER(COALESCE(p."codigo_barra", '')) LIKE :busqueda
+          OR LOWER(COALESCE(p."concentracion", '')) LIKE :busqueda
+          OR LOWER(COALESCE(p."forma_farmaceutica", '')) LIKE :busqueda
+        )
+      `);
+    }
+
+    const products = await sequelize.query(
+      `
+        SELECT
+          p."id_producto",
+          p."nombre",
+          p."codigo_barra",
+          p."precio",
+          p."concentracion",
+          p."forma_farmaceutica",
+          ultimo."fecha_caducidad" AS "ultima_fecha_caducidad",
+          ultimo."precioVenta" AS "ultimo_precio_venta",
+          ultimo."precio_unitario" AS "ultimo_precio_compra",
+          ultimo."id_proveedor" AS "ultimo_id_proveedor",
+          ultimo."proveedor_nombre" AS "ultimo_proveedor_nombre"
+        FROM "Producto" p
+        LEFT JOIN LATERAL (
+          SELECT
+            l."fecha_caducidad",
+            l."precioVenta",
+            dc."precio_unitario",
+            dc."id_proveedor",
+            pr."nombre" AS "proveedor_nombre"
+          FROM "Lote" l
+          LEFT JOIN "DetalleCompra" dc ON dc."id_detalle" = l."id_detalle_compra"
+          LEFT JOIN "Proveedor" pr ON pr."id_proveedor" = dc."id_proveedor"
+          WHERE l."id_producto" = p."id_producto"
+          ORDER BY l."fecha_ingreso" DESC NULLS LAST, l."id_lote" DESC
+          LIMIT 1
+        ) ultimo ON true
+        WHERE COALESCE(p."activo", true) <> false
+          ${filtrosBusqueda.join("\n")}
+        ORDER BY p."nombre" ASC
+        LIMIT :limit
+      `,
+      {
+        type: QueryTypes.SELECT,
+        replacements,
+      }
+    );
+
+    return products;
   }
 
   async getProductById(id) {
@@ -175,7 +247,7 @@ class servicesProducto {
             id_producto: id,
             cantidad: data.cantidad,
             tipo_movimiento: data.tipo_movimiento,
-            fecha_movimiento: new Date(),
+            fecha_movimiento: getNowLapaz(),
             id_trabajador: data.id_trabajador,
           },
           transaction
@@ -189,7 +261,7 @@ class servicesProducto {
           cantidad: data.cantidad,
           subCantidad: data?.subCantidad,
           peso: parseFloat(data.peso).toFixed(2),
-          fecha_actualizacion: new Date(),
+          fecha_actualizacion: getNowLapaz(),
           id_trabajador: data.id_trabajador,
           id_sucursal: data.id_sucursal,
         },
@@ -246,7 +318,7 @@ class servicesProducto {
     }
   }
 
-  async getInventariosByProductId(id) {
+  async getInventariosByProductId(id, idSucursal = null) {
     try {
       const product = await Producto.findOne({
         where: {
@@ -259,6 +331,11 @@ class servicesProducto {
           {
             model: Inventario,
             as: "inventarios",
+            where:
+              Number(idSucursal) > 0
+                ? { id_sucursal: Number(idSucursal) }
+                : undefined,
+            required: Number(idSucursal) > 0,
             include: [
               {
                 model: Lote,
@@ -359,6 +436,11 @@ class servicesProducto {
 
     const transaction = await sequelize.transaction();
 
+    // Si no se indica un numero de factura, se genera uno automatico
+    // compartido por todos los items de esta misma compra (para que se
+    // puedan agrupar como una sola factura en el reporte).
+    const numeroFacturaAuto = `SN-${Date.now()}`;
+
     try {
       const results = [];
 
@@ -379,15 +461,31 @@ class servicesProducto {
           );
         }
 
+        // La hora de registro la pone el servidor, no el navegador de quien
+        // registra la compra (la fecha de caducidad si es la que elige el usuario).
+        const numeroFactura =
+          String(item.detalleCompraData?.numero_factura || "").trim() ||
+          numeroFacturaAuto;
         const newDetalleCompra = await DetalleCompra.create(
-          item.detalleCompraData,
+          {
+            ...item.detalleCompraData,
+            fecha_compra: getNowLapaz(),
+            numero_factura: numeroFactura,
+            id_proveedor_factura:
+              item.detalleCompraData?.id_proveedor_factura || null,
+          },
           {
             transaction,
           }
         );
         const id_detalle_compra = newDetalleCompra.id_detalle;
 
-        const loteData = { ...item.loteData, id_detalle_compra };
+        const loteData = {
+          ...item.loteData,
+          id_detalle_compra,
+          fecha_ingreso: getNowLapaz(),
+          fecha_compra: getNowLapaz(),
+        };
         const newLote = await Lote.create(loteData, { transaction });
 
         await Lote.update(
@@ -443,7 +541,7 @@ class servicesProducto {
               id_producto: item.productId,
               cantidad: item.productUpdateData.cantidad,
               tipo_movimiento: item.productUpdateData.tipo_movimiento,
-              fecha_movimiento: new Date(),
+              fecha_movimiento: getNowLapaz(),
               id_trabajador: item.productUpdateData.id_trabajador,
               lote: newLote.id_lote,
               id_sucursal: item.productUpdateData.id_sucursal,
@@ -457,7 +555,7 @@ class servicesProducto {
             cantidad: item.productUpdateData.cantidad,
             subCantidad: item.productUpdateData.subCantidad,
             peso: parseFloat(item.productUpdateData.peso).toFixed(2),
-            fecha_actualizacion: new Date(),
+            fecha_actualizacion: getNowLapaz(),
             id_trabajador: item.productUpdateData.id_trabajador,
             id_sucursal: item.productUpdateData.id_sucursal,
           },

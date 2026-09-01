@@ -56,6 +56,7 @@ MovimientoCaja.init(
     modelName: "MovimientoCaja",
     tableName: "MovimientoCaja",
     timestamps: false,
+    indexes: [{ fields: ["id_caja"] }],
   }
 );
 

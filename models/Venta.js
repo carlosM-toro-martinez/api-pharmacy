@@ -58,6 +58,10 @@ Venta.init(
     modelName: "Venta",
     tableName: "Venta",
     timestamps: false,
+    indexes: [
+      { fields: ["fecha_venta"] },
+      { fields: ["id_sucursal"] },
+    ],
   }
 );
 

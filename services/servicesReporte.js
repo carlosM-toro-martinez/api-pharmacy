@@ -1,6 +1,8 @@
 const express = require("express");
-const { Op, Sequelize } = require("sequelize");
+const { Op, Sequelize, QueryTypes } = require("sequelize");
+const { DateTime } = require("luxon");
 const {
+  sequelize,
   MovimientoInventario,
   Producto,
   Lote,
@@ -13,6 +15,7 @@ const {
   DetalleVenta,
   Caja,
   Inventario,
+  Sucursal,
 } = require("../models");
 const SucursalService = require("./servicesSucursal");
 
@@ -63,6 +66,21 @@ const ventaConProductosActualizados = (venta) => {
   };
 };
 
+const construirRangoFechas = (desde, hasta) => {
+  const rango = {};
+  if (desde) {
+    rango[Op.gte] = DateTime.fromISO(desde, { zone: "America/La_Paz" })
+      .startOf("day")
+      .toJSDate();
+  }
+  if (hasta) {
+    rango[Op.lte] = DateTime.fromISO(hasta, { zone: "America/La_Paz" })
+      .endOf("day")
+      .toJSDate();
+  }
+  return Reflect.ownKeys(rango).length ? rango : null;
+};
+
 class servicesReporte {
   constructor() {}
 
@@ -70,6 +88,203 @@ class servicesReporte {
     if (idSucursal) return Number(idSucursal);
     const sucursalPrincipal = await sucursalService.obtenerSucursalPrincipal();
     return sucursalPrincipal.id_sucursal;
+  }
+
+  async getReporteCompras(filters = {}) {
+    const idSucursal = Number(filters.id_sucursal);
+    const filtrarPorSucursal = Number.isFinite(idSucursal) && idSucursal > 0;
+    const where = {};
+    const rangoFechas = construirRangoFechas(filters.desde, filters.hasta);
+    if (rangoFechas) where.fecha_compra = rangoFechas;
+    const numeroFactura = String(filters.numero_factura || "").trim();
+    if (numeroFactura) {
+      where.numero_factura = { [Op.iLike]: `%${numeroFactura}%` };
+    }
+
+    // Sequelize aplica mal el LIMIT cuando se combina con un include hasMany
+    // (ignora el WHERE y devuelve filas de más): primero se resuelven los IDs
+    // ya acotados por fecha/sucursal, y recién ahí se cargan los datos
+    // completos para esos IDs puntuales.
+    const comprasIds = await DetalleCompra.findAll({
+      where,
+      attributes: ["id_detalle"],
+      include: filtrarPorSucursal
+        ? [
+            {
+              model: Lote,
+              as: "lotes",
+              attributes: [],
+              required: true,
+              include: [
+                {
+                  model: Inventario,
+                  as: "inventarios",
+                  attributes: [],
+                  required: true,
+                  where: { id_sucursal: idSucursal },
+                },
+              ],
+            },
+          ]
+        : [],
+      order: [["fecha_compra", "DESC"]],
+      limit: 1000,
+      subQuery: false,
+      distinct: true,
+    });
+
+    const ids = comprasIds.map((compra) => compra.id_detalle);
+    if (!ids.length) return [];
+
+    const compras = await DetalleCompra.findAll({
+      where: { id_detalle: ids },
+      include: [
+        {
+          model: Producto,
+          as: "producto",
+          attributes: [
+            "id_producto",
+            "nombre",
+            "codigo_barra",
+            "concentracion",
+            "forma_farmaceutica",
+          ],
+        },
+        {
+          model: Proveedor,
+          as: "proveedor",
+          attributes: ["id_proveedor", "nombre"],
+        },
+        {
+          model: Proveedor,
+          as: "proveedorFactura",
+          attributes: ["id_proveedor", "nombre"],
+        },
+        {
+          model: Trabajador,
+          as: "trabajadorCompra",
+          attributes: ["id_trabajador", "nombre", "apellido_paterno"],
+        },
+        {
+          model: Lote,
+          as: "lotes",
+          attributes: ["id_lote", "numero_lote", "fecha_caducidad"],
+          separate: true,
+          include: [
+            {
+              model: Inventario,
+              as: "inventarios",
+              attributes: ["id_sucursal"],
+            },
+          ],
+        },
+      ],
+      order: [["fecha_compra", "DESC"]],
+    });
+
+    return compras;
+  }
+
+  async getReporteCajas(filters = {}) {
+    const idSucursal = Number(filters.id_sucursal);
+    const where = {};
+    if (Number.isFinite(idSucursal) && idSucursal > 0) {
+      where.id_sucursal = idSucursal;
+    }
+    const rangoFechas = construirRangoFechas(filters.desde, filters.hasta);
+    if (rangoFechas) where.fecha_apertura = rangoFechas;
+
+    const cajas = await Caja.findAll({
+      where,
+      include: [
+        {
+          model: MovimientoCaja,
+          as: "movimientos",
+          separate: true,
+          include: [
+            {
+              model: Trabajador,
+              as: "trabajadorMovimiento",
+              attributes: ["id_trabajador", "nombre", "apellido_paterno"],
+            },
+          ],
+        },
+        {
+          model: Trabajador,
+          as: "trabajadorCierre",
+          attributes: ["id_trabajador", "nombre", "apellido_paterno"],
+        },
+        {
+          model: Sucursal,
+          as: "sucursal",
+          attributes: ["id_sucursal", "nombre"],
+        },
+      ],
+      order: [["fecha_apertura", "DESC"]],
+      limit: 500,
+    });
+
+    return cajas;
+  }
+
+  async getReporteVentasPorFecha(filters = {}) {
+    const idSucursal = Number(filters.id_sucursal);
+    const where = {};
+    if (Number.isFinite(idSucursal) && idSucursal > 0) {
+      where.id_sucursal = idSucursal;
+    }
+    const rangoFechas = construirRangoFechas(filters.desde, filters.hasta);
+    if (rangoFechas) where.fecha_venta = rangoFechas;
+
+    const ventas = await Venta.findAll({
+      where,
+      include: [
+        {
+          model: Trabajador,
+          as: "trabajadorVenta",
+          attributes: ["id_trabajador", "nombre", "apellido_paterno"],
+        },
+        {
+          model: Cliente,
+          as: "cliente",
+          attributes: ["nombre", "apellido"],
+        },
+        {
+          model: Sucursal,
+          as: "sucursal",
+          attributes: ["id_sucursal", "nombre"],
+        },
+        {
+          model: DetalleVenta,
+          as: "detallesVenta",
+          separate: true,
+          include: [
+            {
+              model: Producto,
+              as: "producto",
+              include: {
+                model: Inventario,
+                as: "inventarios",
+                attributes: ["cantidad", "subCantidad", "peso"],
+              },
+            },
+            {
+              model: Lote,
+              as: "lote",
+              include: [
+                {
+                  model: DetalleCompra,
+                  as: "detalleCompra",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      order: [["fecha_venta", "DESC"]],
+      limit: 2000,
+    });
+    return ventas.map(ventaConProductosActualizados);
   }
 
   async getLotesConDetalleCompra(idInicio, idFin) {
@@ -250,7 +465,7 @@ class servicesReporte {
           {
             model: Trabajador,
             as: "trabajadorVenta",
-            attributes: ["nombre"],
+            attributes: ["id_trabajador", "nombre", "apellido_paterno"],
           },
           {
             model: Cliente,
@@ -484,9 +699,13 @@ class servicesReporte {
     }
   }
 
-  async obtenerHistorialProducto(id_producto) {
+  async obtenerHistorialProducto(id_producto, filters = {}) {
+    const idSucursal = Number(filters.id_sucursal);
+    const filtrarPorSucursal = Number.isFinite(idSucursal) && idSucursal > 0;
+
     const compras = await DetalleCompra.findAll({
       where: { id_producto },
+      distinct: true,
       include: [
         {
           model: Trabajador,
@@ -498,6 +717,23 @@ class servicesReporte {
           as: "proveedor",
           attributes: ["id_proveedor", "nombre"],
         },
+        {
+          model: Lote,
+          as: "lotes",
+          attributes: [],
+          required: filtrarPorSucursal,
+          include: filtrarPorSucursal
+            ? [
+                {
+                  model: Inventario,
+                  as: "inventarios",
+                  attributes: [],
+                  required: true,
+                  where: { id_sucursal: idSucursal },
+                },
+              ]
+            : [],
+        },
       ],
     });
 
@@ -508,6 +744,8 @@ class servicesReporte {
           model: Venta,
           as: "venta",
           attributes: ["id_venta", "fecha_venta"],
+          required: filtrarPorSucursal,
+          where: filtrarPorSucursal ? { id_sucursal: idSucursal } : undefined,
           include: [
             {
               model: Trabajador,
@@ -524,11 +762,14 @@ class servicesReporte {
       ],
     });
 
+    const movimientosWhere = {
+      id_producto,
+      tipo_movimiento: "Salida sin venta",
+    };
+    if (filtrarPorSucursal) movimientosWhere.id_sucursal = idSucursal;
+
     const movimientos = await MovimientoInventario.findAll({
-      where: {
-        id_producto,
-        tipo_movimiento: "Salida sin venta",
-      },
+      where: movimientosWhere,
       include: [
         {
           model: Trabajador,
@@ -587,98 +828,99 @@ class servicesReporte {
 
     historial.sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
 
-    return historial;
+    const inventarioWhere = { id_producto };
+    if (filtrarPorSucursal) inventarioWhere.id_sucursal = idSucursal;
+    const inventarios = await Inventario.findAll({
+      where: inventarioWhere,
+      attributes: ["cantidad", "subCantidad", "peso"],
+    });
+    const stock = inventarios.reduce(
+      (totales, inventario) => ({
+        cantidad: totales.cantidad + toNumber(inventario.cantidad),
+        subCantidad: totales.subCantidad + toNumber(inventario.subCantidad),
+        peso: totales.peso + toNumber(inventario.peso),
+      }),
+      { cantidad: 0, subCantidad: 0, peso: 0 }
+    );
+
+    return { historial, stock };
   }
 
-  async obtenerProductosMasVendidos(id_sucursal = null) {
-    const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
-      id_sucursal
-    );
-    const productos = await Producto.findAll({
-      where: {
-        activo: {
-          [Op.ne]: false,
-        },
-      },
-      include: [
-        {
-          model: Inventario,
-          as: "inventarios",
-          where: { id_sucursal: idSucursalOperacion },
-          required: false,
-          attributes: ["cantidad", "subCantidad", "peso"],
-        },
-        {
-          model: DetalleVenta,
-          as: "detallesVenta",
-          attributes: [
-            "id_detalle",
-            "id_venta",
-            "cantidad",
-            "subCantidad",
-            "peso",
-            "precio_unitario",
-          ],
-          include: [
-            {
-              model: Venta,
-              as: "venta",
-              attributes: ["id_venta", "id_sucursal"],
-              where: { id_sucursal: idSucursalOperacion },
-              required: true,
-            },
-          ],
-        },
-      ],
-    });
+  async obtenerProductosMasVendidos(filters = {}) {
+    const idSucursal = Number(filters.id_sucursal);
+    const idSucursalFiltro =
+      Number.isFinite(idSucursal) && idSucursal > 0 ? idSucursal : null;
+    const desde = filters.desde
+      ? DateTime.fromISO(filters.desde, { zone: "America/La_Paz" })
+          .startOf("day")
+          .toJSDate()
+      : null;
+    const hasta = filters.hasta
+      ? DateTime.fromISO(filters.hasta, { zone: "America/La_Paz" })
+          .endOf("day")
+          .toJSDate()
+      : null;
+    const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 200);
 
-    const productosConVentas = productos
-      .map((producto) => {
-        const plainProduct = producto.toJSON();
-        const inventarios = plainProduct.inventarios || [];
-        const detallesVenta = plainProduct.detallesVenta || [];
-        const stockInventario = inventarios.reduce(
-          (totales, inventario) => ({
-            stock: totales.stock + toNumber(inventario.cantidad),
-            subCantidad:
-              totales.subCantidad + toNumber(inventario.subCantidad),
-            peso: totales.peso + toNumber(inventario.peso),
-          }),
-          { stock: 0, subCantidad: 0, peso: 0 }
-        );
-
-        const totalVendidas = detallesVenta.reduce(
-          (acc, detalle) => acc + (detalle.cantidad || 0),
-          0
-        );
-
-        const totalUnidadesVendidas = detallesVenta.reduce(
-          (acc, detalle) => acc + (detalle.subCantidad || 0),
-          0
-        );
-
-        return {
-          ...plainProduct,
-          stock: stockInventario.stock,
-          subCantidad: stockInventario.subCantidad,
-          peso: stockInventario.peso,
-          totalCantidad: stockInventario.stock,
-          totalSubCantidad: stockInventario.subCantidad,
-          totalPeso: stockInventario.peso,
-          totalVendidas,
-          totalUnidadesVendidas,
-        };
-      })
-      .filter(
-        (producto) =>
-          producto.totalVendidas > 0 || producto.totalUnidadesVendidas > 0
-      );
-
-    productosConVentas.sort(
-      (a, b) => b.totalUnidadesVendidas - a.totalUnidadesVendidas
+    const productos = await sequelize.query(
+      `
+        SELECT
+          p."id_producto",
+          p."nombre",
+          p."codigo_barra",
+          p."precio",
+          p."concentracion",
+          p."forma_farmaceutica",
+          SUM(dv."cantidad")::int AS "totalCantidad",
+          SUM(dv."subCantidad")::int AS "totalUnidadesVendidas",
+          COUNT(DISTINCT dv."id_venta")::int AS "totalVentas"
+        FROM "DetalleVenta" dv
+        INNER JOIN "Venta" v ON v."id_venta" = dv."id_venta"
+        INNER JOIN "Producto" p ON p."id_producto" = dv."id_producto"
+        WHERE COALESCE(p."activo", true) <> false
+          AND (:desde::timestamp IS NULL OR v."fecha_venta" >= :desde)
+          AND (:hasta::timestamp IS NULL OR v."fecha_venta" <= :hasta)
+          AND (:idSucursal::int IS NULL OR v."id_sucursal" = :idSucursal)
+        GROUP BY
+          p."id_producto", p."nombre", p."codigo_barra", p."precio",
+          p."concentracion", p."forma_farmaceutica"
+        ORDER BY "totalUnidadesVendidas" DESC
+        LIMIT :limit
+      `,
+      {
+        type: QueryTypes.SELECT,
+        replacements: { desde, hasta, idSucursal: idSucursalFiltro, limit },
+      }
     );
 
-    return productosConVentas;
+    if (!productos.length) return productos;
+
+    const ids = productos.map((producto) => producto.id_producto);
+    const stockPorProducto = await sequelize.query(
+      `
+        SELECT
+          "id_producto",
+          SUM("cantidad")::int AS stock,
+          SUM("subCantidad")::int AS "subCantidad"
+        FROM "Inventario"
+        WHERE "id_producto" IN (:ids)
+          AND (:idSucursal::int IS NULL OR "id_sucursal" = :idSucursal)
+        GROUP BY "id_producto"
+      `,
+      {
+        type: QueryTypes.SELECT,
+        replacements: { ids, idSucursal: idSucursalFiltro },
+      }
+    );
+    const stockPorId = new Map(
+      stockPorProducto.map((fila) => [fila.id_producto, fila])
+    );
+
+    return productos.map((producto) => ({
+      ...producto,
+      stock: stockPorId.get(producto.id_producto)?.stock || 0,
+      subCantidad: stockPorId.get(producto.id_producto)?.subCantidad || 0,
+    }));
   }
 }
 

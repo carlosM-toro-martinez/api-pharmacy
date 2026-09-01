@@ -36,7 +36,9 @@ route.post("/cerrar", async (req, res) => {
 
 route.get("/", async (req, res) => {
   try {
-    const cajas = await cajaService.getLastCaja(req.headers["x-sucursal-id"]);
+    const cajas = await cajaService.getLastCaja(
+      req.headers["x-sucursal-id"] || req.query.id_sucursal
+    );
 
     if (cajas.length === 0) {
       return res.json({});
@@ -51,7 +53,9 @@ route.get("/", async (req, res) => {
 
 route.get("/all", async (req, res) => {
   try {
-    const cajas = await cajaService.getAllCajas(req.headers["x-sucursal-id"]);
+    const cajas = await cajaService.getAllCajas(
+      req.headers["x-sucursal-id"] || req.query.id_sucursal
+    );
     res.json(cajas);
   } catch (error) {
     console.error("Error fetching cajas:", error);

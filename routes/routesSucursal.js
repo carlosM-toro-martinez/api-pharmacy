@@ -47,6 +47,18 @@ route.put("/:id_sucursal", async (req, res) => {
   }
 });
 
+route.delete("/:id_sucursal", async (req, res) => {
+  try {
+    const resultado = await sucursalService.eliminarSucursal(
+      req.params.id_sucursal
+    );
+    res.json(resultado);
+  } catch (error) {
+    console.error("Error eliminando sucursal:", error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
 route.post("/:id_sucursal/principal", async (req, res) => {
   try {
     const sucursal = await sucursalService.marcarPrincipal(
@@ -61,10 +73,22 @@ route.post("/:id_sucursal/principal", async (req, res) => {
 
 route.post("/transferir", async (req, res) => {
   try {
-    const resultado = await sucursalService.transferirInventario(req.body);
+    const resultado = Array.isArray(req.body?.items)
+      ? await sucursalService.transferirInventarios(req.body)
+      : await sucursalService.transferirInventario(req.body);
     res.status(201).json(resultado);
   } catch (error) {
     console.error("Error transfiriendo inventario:", error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+route.post("/stock-inicial", async (req, res) => {
+  try {
+    const resultado = await sucursalService.cargarStockInicial(req.body);
+    res.status(201).json(resultado);
+  } catch (error) {
+    console.error("Error cargando stock inicial:", error);
     res.status(400).json({ error: error.message });
   }
 });

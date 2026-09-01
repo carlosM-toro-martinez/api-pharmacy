@@ -54,7 +54,10 @@ Lote.init(
     modelName: "Lote",
     tableName: "Lote",
     timestamps: false,
-    unique: ["id_producto", "numero_lote"],
+    indexes: [
+      { fields: ["id_producto"] },
+      { fields: ["id_detalle_compra"] },
+    ],
   }
 );
 

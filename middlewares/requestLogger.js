@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { formatLapaz } = require('../utils/dateUtils');
 
 // Minimal, efficient request logger and lightweight dedupe helper info
 // - Uses built-in crypto.randomUUID() for request IDs (no extra dependency)
@@ -15,7 +16,7 @@ module.exports = (req, res, next) => {
     req.bodyHash = bodyHash;
 
     // Minimal info (timestamp, id, method, path, ip, bodyHash)
-    const now = new Date().toISOString();
+    const now = formatLapaz(new Date(), "dd/MM/yyyy HH:mm:ss");
     const ip = req.ip || req.headers['x-forwarded-for'] || req.connection?.remoteAddress;
 
     // Keep logs concise; can be expanded to structured logger later

@@ -20,6 +20,36 @@ route.get("/almacenes/movimientos/:idInicio/:idFin", async (req, res) => {
   }
 });
 
+route.get("/compras", async (req, res) => {
+  try {
+    const compras = await reporteService.getReporteCompras(req.query);
+    res.json(compras);
+  } catch (error) {
+    console.error("Error fetching reporte de compras:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+route.get("/cajas", async (req, res) => {
+  try {
+    const cajas = await reporteService.getReporteCajas(req.query);
+    res.json(cajas);
+  } catch (error) {
+    console.error("Error fetching reporte de cajas:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+route.get("/ventas-reporte", async (req, res) => {
+  try {
+    const ventas = await reporteService.getReporteVentasPorFecha(req.query);
+    res.json(ventas);
+  } catch (error) {
+    console.error("Error fetching reporte de ventas:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 route.get("/almacenes/compras/:proveedorId", async (req, res) => {
   const { proveedorId } = req.params;
   try {
@@ -126,10 +156,11 @@ route.get("/producto/:id_producto/historial", async (req, res) => {
   const { id_producto } = req.params;
 
   try {
-    const historial = await reporteService.obtenerHistorialProducto(
-      id_producto
+    const resultado = await reporteService.obtenerHistorialProducto(
+      id_producto,
+      req.query
     );
-    res.json({ historial });
+    res.json(resultado);
   } catch (error) {
     console.error("Error al obtener el historial del producto:", error);
     res.status(500).json({ error: "Error interno del servidor" });
@@ -138,9 +169,10 @@ route.get("/producto/:id_producto/historial", async (req, res) => {
 
 route.get("/mas-vendidos", async (req, res) => {
   try {
-    const productos = await reporteService.obtenerProductosMasVendidos(
-      req.headers["x-sucursal-id"]
-    );
+    const productos = await reporteService.obtenerProductosMasVendidos({
+      ...req.query,
+      id_sucursal: req.query.id_sucursal || req.headers["x-sucursal-id"],
+    });
     res.json({ productos });
   } catch (error) {
     console.error("Error al obtener productos más vendidos:", error);

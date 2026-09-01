@@ -17,7 +17,8 @@ module.exports = (passport) => {
             include: [
               {
                 model: Rol,
-                include: [{ model: Permiso }],
+                as: "rol",
+                include: [{ model: Permiso, as: "permisos" }],
               },
             ],
           });

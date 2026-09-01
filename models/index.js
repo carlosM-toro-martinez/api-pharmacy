@@ -22,6 +22,7 @@ const Categoria = require("./Categoria");
 const MetodoVenta = require("./MetodoVenta");
 const Garantia = require("./Garantia");
 const Sucursal = require("./Sucursal");
+const RegistroLogin = require("./RegistroLogin");
 
 // Asociación DetalleVenta -> Lote
 DetalleVenta.belongsTo(Lote, {
@@ -151,6 +152,17 @@ DetalleCompra.belongsTo(Proveedor, {
 Proveedor.hasMany(DetalleCompra, {
   foreignKey: "id_proveedor",
   as: "detallesCompra",
+});
+
+// DetalleCompra - Proveedor de la factura (distribuidora), distinto del
+// proveedor/linea del producto de arriba.
+DetalleCompra.belongsTo(Proveedor, {
+  foreignKey: "id_proveedor_factura",
+  as: "proveedorFactura",
+});
+Proveedor.hasMany(DetalleCompra, {
+  foreignKey: "id_proveedor_factura",
+  as: "facturasComoDistribuidora",
 });
 
 // Lote - DetalleCompra
@@ -336,4 +348,5 @@ module.exports = {
   Categoria,
   MetodoVenta,
   Sucursal,
+  RegistroLogin,
 };

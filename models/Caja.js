@@ -48,6 +48,10 @@ Caja.init(
     modelName: "Caja",
     tableName: "Caja",
     timestamps: false,
+    indexes: [
+      { fields: ["fecha_apertura"] },
+      { fields: ["id_sucursal"] },
+    ],
   }
 );
 

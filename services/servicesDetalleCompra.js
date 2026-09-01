@@ -6,6 +6,7 @@ const Producto = require("../models/Producto");
 const Proveedor = require("../models/Proveedor");
 const sequelize = require("../libs/dbConexionORM");
 const AjustesService = require("./servicesAjustes");
+const { getNowLapaz } = require("../utils/dateUtils");
 
 const ajustesService = new AjustesService();
 
@@ -105,17 +106,44 @@ class servicesDetalleCompra {
 
   async updateDetalleCompra(id_detalle, data) {
     try {
-      console.log("updateDetalleCompra data:", data);
+      const { precio_unitario, precioVenta, id_lote, id_proveedor, id_producto } =
+        data;
+      let detalleCompra = null;
+      const idDetalleNum = Number(id_detalle);
 
-      const detalleCompra = await DetalleCompra.findByPk(id_detalle);
-      if (!detalleCompra) {
-        throw new Error(`DetalleCompra with ID ${id_detalle} not found`);
-      }
+      const editaCompraOProveedor =
+        precio_unitario !== undefined || id_proveedor !== undefined;
 
-      const { precio_unitario, precioVenta, id_lote, id_proveedor } = data;
+      if (editaCompraOProveedor) {
+        if (idDetalleNum) {
+          detalleCompra = await DetalleCompra.findByPk(idDetalleNum);
+        }
 
-      if (precio_unitario !== undefined && id_proveedor !== undefined) {
-        await detalleCompra.update({ precio_unitario, id_proveedor });
+        if (detalleCompra) {
+          const payload = {};
+          if (precio_unitario !== undefined) payload.precio_unitario = precio_unitario;
+          if (id_proveedor !== undefined) payload.id_proveedor = id_proveedor;
+          await detalleCompra.update(payload);
+        } else if (id_lote) {
+          // Este lote no tenia todavia un DetalleCompra (ej. viene de stock
+          // inicial o de una transferencia sin costo/proveedor): se crea uno
+          // nuevo y se vincula al lote, en vez de descartar en silencio lo
+          // que se esta editando.
+          const lote = await Lote.findByPk(id_lote);
+          if (!lote) {
+            throw new Error(`Lote with ID ${id_lote} not found`);
+          }
+          detalleCompra = await DetalleCompra.create({
+            id_producto: id_producto || lote.id_producto,
+            id_proveedor: id_proveedor || null,
+            cantidad: lote.cantidad,
+            subCantidad: lote.subCantidad,
+            precio_unitario: precio_unitario ?? null,
+            peso: lote.peso || 0,
+            fecha_compra: getNowLapaz(),
+          });
+          await lote.update({ id_detalle_compra: detalleCompra.id_detalle });
+        }
       }
 
       if (precioVenta !== undefined && id_lote) {
@@ -124,7 +152,13 @@ class servicesDetalleCompra {
           throw new Error(`Lote with ID ${id_lote} not found`);
         }
 
-        await lote.update({ precioVenta });
+        // El precio de venta es del producto, no de un lote/sucursal en
+        // particular: se comparte en todos los lotes del producto (todas
+        // las sucursales), igual que ya ocurre al registrar una compra.
+        await Lote.update(
+          { precioVenta },
+          { where: { id_producto: lote.id_producto } }
+        );
       }
 
       return detalleCompra;

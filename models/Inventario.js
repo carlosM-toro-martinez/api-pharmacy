@@ -57,6 +57,11 @@ Inventario.init(
     modelName: "Inventario",
     tableName: "Inventario",
     timestamps: false,
+    indexes: [
+      { fields: ["id_producto"] },
+      { fields: ["id_sucursal"] },
+      { fields: ["id_lote"] },
+    ],
   }
 );
 

@@ -1,6 +1,7 @@
 const MovimientoCaja = require("../models/MovimientoCaja");
 const Caja = require("../models/Caja");
 const sequelize = require("../libs/dbConexionORM");
+const { getNowLapaz } = require("../utils/dateUtils");
 
 class servicesMovimientoCaja {
   constructor() {
@@ -12,8 +13,7 @@ class servicesMovimientoCaja {
     tipo_movimiento,
     monto,
     id_trabajador,
-    motivo,
-    fecha_movimiento
+    motivo
   ) {
     const t = await sequelize.transaction();
 
@@ -24,7 +24,7 @@ class servicesMovimientoCaja {
           tipo_movimiento,
           monto,
           id_trabajador,
-          fecha_movimiento,
+          fecha_movimiento: getNowLapaz(),
           motivo,
         },
         { transaction: t }

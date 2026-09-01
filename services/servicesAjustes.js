@@ -1,9 +1,11 @@
-const { Op } = require("sequelize");
+const { Op, QueryTypes } = require("sequelize");
 const Producto = require("../models/Producto");
 const Inventario = require("../models/Inventario");
 const Lote = require("../models/Lote");
 const DetalleCompra = require("../models/DetalleCompra");
 const MovimientoInventario = require("../models/MovimientoInventario");
+const sequelize = require("../libs/dbConexionORM");
+const { toLapazISO } = require("../utils/dateUtils");
 
 const toNumber = (value) => {
   const number = Number(value);
@@ -13,6 +15,38 @@ const toNumber = (value) => {
 const round2 = (value) => Number(toNumber(value).toFixed(2));
 
 class servicesAjustes {
+  getInventarioVacioWhere() {
+    return {
+      [Op.and]: [
+        {
+          [Op.or]: [{ cantidad: 0 }, { cantidad: null }],
+        },
+        {
+          [Op.or]: [{ subCantidad: 0 }, { subCantidad: null }],
+        },
+        {
+          [Op.or]: [{ peso: 0 }, { peso: null }],
+        },
+      ],
+    };
+  }
+
+  getLoteVacioWhere() {
+    return {
+      [Op.and]: [
+        {
+          [Op.or]: [{ cantidad: 0 }, { cantidad: null }],
+        },
+        {
+          [Op.or]: [{ subCantidad: 0 }, { subCantidad: null }],
+        },
+        {
+          [Op.or]: [{ peso: 0 }, { peso: null }],
+        },
+      ],
+    };
+  }
+
   async calcularStockInventario(id_producto, transaction = null) {
     const inventarios = await Inventario.findAll({
       where: { id_producto },
@@ -207,9 +241,7 @@ class servicesAjustes {
     const grupos = new Map();
 
     for (const compra of compras) {
-      const fechaCompra = compra.fecha_compra
-        ? new Date(compra.fecha_compra).toISOString()
-        : "";
+      const fechaCompra = compra.fecha_compra ? toLapazISO(compra.fecha_compra) : "";
       const key = [
         compra.id_producto,
         compra.id_proveedor,
@@ -260,7 +292,7 @@ class servicesAjustes {
 
     for (const movimiento of movimientos) {
       const fechaMovimiento = movimiento.fecha_movimiento
-        ? new Date(movimiento.fecha_movimiento).toISOString()
+        ? toLapazISO(movimiento.fecha_movimiento)
         : "";
       const key = [
         movimiento.id_producto,
@@ -298,22 +330,216 @@ class servicesAjustes {
     };
   }
 
-  async resumenAuditoria() {
-    const [stock, huerfanos, negativos, comprasDuplicadas, movimientosDuplicados] =
-      await Promise.all([
-      this.auditarStock(),
-      this.auditarInventariosHuerfanos(),
-      this.auditarInventariosNegativos(),
-      this.auditarComprasDuplicadas(),
-      this.auditarMovimientosDuplicados(),
+  async contarInventariosVacios(transaction = null) {
+    return await Inventario.count({
+      where: this.getInventarioVacioWhere(),
+      transaction,
+    });
+  }
+
+  async obtenerIdsLotesVaciosBorrables(transaction = null) {
+    const lotes = await sequelize.query(
+      `
+        SELECT l."id_lote"
+        FROM "Lote" l
+        WHERE COALESCE(l."cantidad", 0) = 0
+          AND COALESCE(l."subCantidad", 0) = 0
+          AND COALESCE(l."peso", 0) = 0
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "Inventario" i
+            WHERE i."id_lote" = l."id_lote"
+              AND (
+                COALESCE(i."cantidad", 0) <> 0
+                OR COALESCE(i."subCantidad", 0) <> 0
+                OR COALESCE(i."peso", 0) <> 0
+              )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "DetalleVenta" dv
+            WHERE dv."id_lote" = l."id_lote"
+          )
+      `,
+      {
+        type: QueryTypes.SELECT,
+        transaction,
+      }
+    );
+
+    return lotes.map((lote) => lote.id_lote);
+  }
+
+  async contarLotesVaciosBorrables(transaction = null) {
+    const [resultado] = await sequelize.query(
+      `
+        SELECT COUNT(*)::int AS total
+        FROM "Lote" l
+        WHERE COALESCE(l."cantidad", 0) = 0
+          AND COALESCE(l."subCantidad", 0) = 0
+          AND COALESCE(l."peso", 0) = 0
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "Inventario" i
+            WHERE i."id_lote" = l."id_lote"
+              AND (
+                COALESCE(i."cantidad", 0) <> 0
+                OR COALESCE(i."subCantidad", 0) <> 0
+                OR COALESCE(i."peso", 0) <> 0
+              )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "DetalleVenta" dv
+            WHERE dv."id_lote" = l."id_lote"
+          )
+      `,
+      {
+        type: QueryTypes.SELECT,
+        transaction,
+      }
+    );
+
+    return Number(resultado?.total || 0);
+  }
+
+  async resumenMantenimiento() {
+    const [inventariosVacios, lotesVaciosBorrables] = await Promise.all([
+      this.contarInventariosVacios(),
+      this.contarLotesVaciosBorrables(),
     ]);
 
     return {
-      stock,
+      inventariosVacios,
+      lotesVaciosBorrables,
+    };
+  }
+
+  async limpiarRegistrosVacios() {
+    return await sequelize.transaction(async (transaction) => {
+      const idsLotesBorrables = await this.obtenerIdsLotesVaciosBorrables(
+        transaction
+      );
+
+      const inventariosEliminados = await Inventario.destroy({
+        where: this.getInventarioVacioWhere(),
+        transaction,
+      });
+
+      const lotesEliminados = idsLotesBorrables.length
+        ? await Lote.destroy({
+            where: {
+              id_lote: idsLotesBorrables,
+            },
+            transaction,
+          })
+        : 0;
+
+      return {
+        message: "Mantenimiento de inventario finalizado.",
+        inventariosEliminados,
+        lotesEliminados,
+      };
+    });
+  }
+
+  async auditarProveedoresDivergentes() {
+    // Un mismo producto puede tener lotes con distinto proveedor (o sin
+    // proveedor) por como llego el stock (compra normal, stock inicial,
+    // transferencia). Esto fragmenta el producto en varias opciones al
+    // buscarlo para vender, y puede confundir cual es el stock real.
+    const filas = await sequelize.query(
+      `
+        SELECT
+          p."id_producto",
+          p."nombre",
+          COALESCE(dc."id_proveedor", -1) AS "id_proveedor",
+          pr."nombre" AS "proveedor_nombre",
+          COUNT(*)::int AS "lotes",
+          SUM(
+            CASE WHEN COALESCE(i."subCantidad", 0) > 0
+              THEN i."subCantidad"
+              ELSE COALESCE(i."cantidad", 0)
+            END
+          )::int AS "unidades"
+        FROM "Lote" l
+        INNER JOIN "Producto" p ON p."id_producto" = l."id_producto"
+        INNER JOIN "Inventario" i ON i."id_lote" = l."id_lote"
+        LEFT JOIN "DetalleCompra" dc ON dc."id_detalle" = l."id_detalle_compra"
+        LEFT JOIN "Proveedor" pr ON pr."id_proveedor" = dc."id_proveedor"
+        WHERE (COALESCE(i."subCantidad", 0) > 0 OR COALESCE(i."cantidad", 0) > 0)
+          AND COALESCE(p."activo", true) <> false
+        GROUP BY p."id_producto", p."nombre", COALESCE(dc."id_proveedor", -1), pr."nombre"
+        ORDER BY p."id_producto"
+      `,
+      { type: QueryTypes.SELECT }
+    );
+
+    const porProducto = new Map();
+    for (const fila of filas) {
+      if (!porProducto.has(fila.id_producto)) {
+        porProducto.set(fila.id_producto, {
+          id_producto: fila.id_producto,
+          nombre: fila.nombre,
+          proveedores: [],
+        });
+      }
+      porProducto.get(fila.id_producto).proveedores.push({
+        id_proveedor: fila.id_proveedor === -1 ? null : fila.id_proveedor,
+        nombre: fila.proveedor_nombre || "Sin proveedor",
+        lotes: fila.lotes,
+        unidades: fila.unidades,
+      });
+    }
+
+    const divergentes = Array.from(porProducto.values())
+      .filter((producto) => producto.proveedores.length > 1)
+      .map((producto) => ({
+        ...producto,
+        totalUnidades: producto.proveedores.reduce(
+          (total, p) => total + toNumber(p.unidades),
+          0
+        ),
+      }))
+      .sort((a, b) => b.proveedores.length - a.proveedores.length);
+
+    return {
+      totalProductos: divergentes.length,
+      productos: divergentes,
+    };
+  }
+
+  async resumenAuditoria() {
+    // La comparacion Producto vs Inventario (auditarStock) queda fuera de
+    // este resumen automatico: desde que Stock Inicial y Transferencias
+    // tambien sincronizan Producto.stock/subCantidad, casi siempre va a
+    // estar en cero diferencias, asi que no vale la pena recalcularla en
+    // cada carga de la pagina. Se pide aparte (GET /auditoria-stock) solo
+    // cuando el usuario la quiere verificar.
+    const [
       huerfanos,
       negativos,
       comprasDuplicadas,
       movimientosDuplicados,
+      mantenimiento,
+      proveedoresDivergentes,
+    ] =
+      await Promise.all([
+      this.auditarInventariosHuerfanos(),
+      this.auditarInventariosNegativos(),
+      this.auditarComprasDuplicadas(),
+      this.auditarMovimientosDuplicados(),
+      this.resumenMantenimiento(),
+      this.auditarProveedoresDivergentes(),
+    ]);
+
+    return {
+      huerfanos,
+      negativos,
+      comprasDuplicadas,
+      movimientosDuplicados,
+      mantenimiento,
+      proveedoresDivergentes,
     };
   }
 }

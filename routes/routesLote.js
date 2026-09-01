@@ -18,7 +18,11 @@ route.get("/", async (req, res) => {
 // Ruta GET para obtener los 10 productos mas cerca de vencerse
 route.get("/proximos_vencidos", async (req, res) => {
   try {
-    const lotes = await loteService.getTop20LotesPorVencer();
+    const lotes = await loteService.getTop20LotesPorVencer({
+      id_sucursal: req.query.id_sucursal || req.headers["x-sucursal-id"],
+      dias: req.query.dias,
+      limit: req.query.limit,
+    });
     res.json(lotes);
   } catch (error) {
     console.error("Error fetching lotes:", error);

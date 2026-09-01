@@ -135,7 +135,7 @@ class servicesTrabajador {
         cargo,
         fecha_contratacion,
         id_rol,
-        username,
+        username: String(username || "").trim(),
         password: hashedPassword,
         id_sucursal: id_sucursal || null,
       });
@@ -155,6 +155,9 @@ class servicesTrabajador {
         throw new Error(`Trabajador with ID ${id_trabajador} not found`);
       }
       const payload = { ...data };
+      if (payload.username !== undefined) {
+        payload.username = String(payload.username || "").trim();
+      }
       if (payload.password) {
         const salt = await bcrypt.genSalt(10);
         payload.password = await bcrypt.hash(payload.password, salt);

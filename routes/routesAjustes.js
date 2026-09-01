@@ -24,6 +24,26 @@ route.get("/resumen", async (req, res) => {
   }
 });
 
+route.get("/mantenimiento", async (req, res) => {
+  try {
+    const resumen = await ajustesService.resumenMantenimiento();
+    res.json(resumen);
+  } catch (error) {
+    console.error("Error obteniendo resumen de mantenimiento:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+route.post("/limpiar-registros-vacios", async (req, res) => {
+  try {
+    const resultado = await ajustesService.limpiarRegistrosVacios();
+    res.json(resultado);
+  } catch (error) {
+    console.error("Error limpiando registros vacios:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 route.get("/inventarios-huerfanos", async (req, res) => {
   try {
     const huerfanos = await ajustesService.auditarInventariosHuerfanos();

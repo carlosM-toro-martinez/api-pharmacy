@@ -35,6 +35,7 @@ MetodoVenta.init(
     modelName: "MetodoVenta",
     tableName: "MetodoVenta",
     timestamps: false,
+    indexes: [{ fields: ["id_producto"] }],
   }
 );
 

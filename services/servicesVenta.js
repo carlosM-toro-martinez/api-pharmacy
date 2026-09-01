@@ -10,6 +10,7 @@ const { DateTime } = require("luxon");
 const { Op } = require("sequelize");
 const AjustesService = require("./servicesAjustes");
 const SucursalService = require("./servicesSucursal");
+const { getNowLapaz } = require("../utils/dateUtils");
 
 const ajustesService = new AjustesService();
 const sucursalService = new SucursalService();
@@ -58,6 +59,12 @@ class servicesVenta {
   }
 
   async realizarVentaCompleta(dataVenta, detalles, id_caja) {
+    // La hora la pone el servidor, no el navegador del vendedor: si el reloj
+    // o la zona horaria de su equipo esta mal, la venta quedaba con una hora
+    // incorrecta (a diferencia de la apertura de caja, que ya usaba la hora
+    // del servidor).
+    dataVenta = { ...dataVenta, fecha_venta: getNowLapaz() };
+
     const operacionKey = buildOperacionKey(
       "venta-completa",
       dataVenta,
@@ -133,7 +140,6 @@ class servicesVenta {
     transaction,
     idSucursal = null
   ) {
-    const mods = {};
     const productosAfectados = new Set();
     const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
       idSucursal,
@@ -141,7 +147,7 @@ class servicesVenta {
     );
 
     for (const det of detalles) {
-      const {
+      let {
         id_producto,
         id_lote,
         cantidad,
@@ -151,6 +157,18 @@ class servicesVenta {
         precio,
         clienteId,
       } = det;
+
+      const inv = await Inventario.findOne({
+        where: {
+          id_producto,
+          id_lote: id_lote || null,
+          id_sucursal: idSucursalOperacion,
+        },
+        transaction,
+      });
+      if (!inv) throw new Error("Inventario no encontrado para producto/lote");
+      if (!inv.id_lote) cantidad = 0;
+      productosAfectados.add(id_producto);
 
       await DetalleVenta.create(
         {
@@ -166,13 +184,12 @@ class servicesVenta {
         { transaction }
       );
 
-      const inv = await Inventario.findOne({
-        where: { id_producto, id_lote, id_sucursal: idSucursalOperacion },
-        transaction,
-      });
-      if (!inv) throw new Error("Inventario no encontrado para producto/lote");
-      productosAfectados.add(id_producto);
-
+      // El stock real y autoritativo es el de este Inventario (lote +
+      // sucursal); Producto.stock/subCantidad es solo una cache agregada
+      // que se recalcula abajo con sincronizarStockProducto, asi que no se
+      // valida ni se decrementa aqui (si esa cache estuviera desincronizada
+      // por cualquier motivo, bloqueaba ventas validas con "insuficiente"
+      // aunque el inventario real sobrara).
       inv.subCantidad = decrementar(
         "subCantidad",
         inv.subCantidad,
@@ -188,36 +205,6 @@ class servicesVenta {
         },
         { transaction }
       );
-
-      if (!mods[id_producto]) {
-        const prod = await Producto.findByPk(id_producto, { transaction });
-        if (!prod) throw new Error("Producto no encontrado");
-        mods[id_producto] = {
-          prod,
-          stock: prod.stock,
-          subCantidad: prod.subCantidad,
-          peso: prod.peso,
-        };
-      }
-      mods[id_producto].stock = decrementar(
-        "stock",
-        mods[id_producto].stock,
-        cantidad
-      );
-      mods[id_producto].subCantidad = decrementar(
-        "subCantidad",
-        mods[id_producto].subCantidad,
-        cantidad_unidad
-      );
-      mods[id_producto].peso = decrementar(
-        "peso",
-        mods[id_producto].peso,
-        peso
-      );
-    }
-
-    for (const { prod, stock, subCantidad, peso } of Object.values(mods)) {
-      await prod.update({ stock, subCantidad, peso }, { transaction });
     }
 
     for (const id_producto of productosAfectados) {
@@ -234,6 +221,8 @@ class servicesVenta {
   }
 
   async procesarInventario(dataVenta, detalles, id_caja) {
+    dataVenta = { ...dataVenta, fecha_venta: getNowLapaz() };
+
     const operacionKey = buildOperacionKey(
       "salida-inventario",
       dataVenta,
@@ -255,7 +244,6 @@ class servicesVenta {
 
     try {
     return await sequelize.transaction(async (t) => {
-      const mods = {};
       const productosAfectados = new Set();
       const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
         dataVenta?.id_sucursal,
@@ -263,16 +251,25 @@ class servicesVenta {
       );
 
       for (const det of detalles) {
-        const { id_producto, id_lote, cantidad, cantidad_unidad, peso } = det;
+        let { id_producto, id_lote, cantidad, cantidad_unidad, peso } = det;
 
         const inv = await Inventario.findOne({
-          where: { id_producto, id_lote, id_sucursal: idSucursalOperacion },
+          where: {
+            id_producto,
+            id_lote: id_lote || null,
+            id_sucursal: idSucursalOperacion,
+          },
           transaction: t,
         });
         if (!inv)
           throw new Error("Inventario no encontrado para producto/lote");
+        if (!inv.id_lote) cantidad = 0;
         productosAfectados.add(id_producto);
 
+        // El stock real y autoritativo es el de este Inventario (lote +
+        // sucursal); Producto.stock/subCantidad es solo una cache agregada
+        // que se recalcula abajo con sincronizarStockProducto, asi que no se
+        // valida ni se decrementa aqui.
         inv.subCantidad = decrementar(
           "subCantidad",
           inv.subCantidad,
@@ -303,37 +300,6 @@ class servicesVenta {
           },
           { transaction: t }
         );
-
-        if (!mods[id_producto]) {
-          const prod = await Producto.findByPk(id_producto, { transaction: t });
-          if (!prod) throw new Error("Producto no encontrado");
-          mods[id_producto] = {
-            prod,
-            stock: prod.stock,
-            subCantidad: prod.subCantidad,
-            peso: prod.peso,
-          };
-        }
-
-        mods[id_producto].stock = decrementar(
-          "stock",
-          mods[id_producto].stock,
-          cantidad
-        );
-        mods[id_producto].subCantidad = decrementar(
-          "subCantidad",
-          mods[id_producto].subCantidad,
-          cantidad_unidad
-        );
-        mods[id_producto].peso = decrementar(
-          "peso",
-          mods[id_producto].peso,
-          peso
-        );
-      }
-
-      for (const { prod, stock, subCantidad, peso } of Object.values(mods)) {
-        await prod.update({ stock, subCantidad, peso }, { transaction: t });
       }
 
       for (const id_producto of productosAfectados) {
@@ -361,7 +327,7 @@ class servicesVenta {
 
       const id_venta = ventaDetalles[0].id_venta;
       const id_caja = ventaDetalles[0].id_caja;
-      const fecha_venta = ventaDetalles[0].fecha_venta;
+      const fecha_venta = getNowLapaz();
       const id_trabajador = ventaDetalles[0].id_trabajador;
       const clienteId = ventaDetalles[0].clienteId;
       const total = ventaDetalles[0].total;
@@ -505,7 +471,7 @@ class servicesVenta {
           {
             model: Trabajador,
             as: "trabajadorVenta",
-            attributes: ["nombre"],
+            attributes: ["id_trabajador", "nombre", "apellido_paterno"],
           },
           {
             model: Cliente,

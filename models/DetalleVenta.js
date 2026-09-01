@@ -52,6 +52,10 @@ DetalleVenta.init(
     modelName: "DetalleVenta",
     tableName: "DetalleVenta",
     timestamps: false,
+    indexes: [
+      { fields: ["id_venta"] },
+      { fields: ["id_producto"] },
+    ],
   }
 );
 

@@ -16,6 +16,29 @@ route.get("/", async (req, res) => {
   }
 });
 
+route.get("/reporte/movimientos", async (req, res) => {
+  try {
+    const movimientos = await movimientoInventarioService.getMovimientos(
+      req.query
+    );
+    res.json(movimientos);
+  } catch (error) {
+    console.error("Error obteniendo reporte de movimientos:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+route.get("/transferencias/reporte", async (req, res) => {
+  try {
+    const transferencias =
+      await movimientoInventarioService.getTransferencias(req.query);
+    res.json(transferencias);
+  } catch (error) {
+    console.error("Error obteniendo reporte de transferencias:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Ruta GET para obtener un movimiento de inventario por id_movimiento
 route.get("/:id_movimiento", async (req, res) => {
   try {

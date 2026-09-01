@@ -1,47 +1,6 @@
 const Lote = require("../models/Lote");
-const Producto = require("../models/Producto");
-const MetodoVenta = require("../models/MetodoVenta");
-const Inventario = require("../models/Inventario");
-const { Op } = require("sequelize");
-
-const toNumber = (value) => {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : 0;
-};
-
-const calcularStockProductoDesdeInventario = (producto) => {
-  const inventarios = producto?.inventarios || [];
-  return inventarios.reduce(
-    (totales, inventario) => ({
-      stock: totales.stock + toNumber(inventario.cantidad),
-      subCantidad: totales.subCantidad + toNumber(inventario.subCantidad),
-      peso: totales.peso + toNumber(inventario.peso),
-    }),
-    { stock: 0, subCantidad: 0, peso: 0 }
-  );
-};
-
-const loteConProductoActualizado = (lote) => {
-  const plainLote = lote.toJSON();
-  if (!plainLote.producto) return plainLote;
-
-  const stockInventario = calcularStockProductoDesdeInventario(
-    plainLote.producto
-  );
-
-  return {
-    ...plainLote,
-    producto: {
-      ...plainLote.producto,
-      stock: stockInventario.stock,
-      subCantidad: stockInventario.subCantidad,
-      peso: stockInventario.peso,
-      totalCantidad: stockInventario.stock,
-      totalSubCantidad: stockInventario.subCantidad,
-      totalPeso: stockInventario.peso,
-    },
-  };
-};
+const { QueryTypes } = require("sequelize");
+const sequelize = require("../libs/dbConexionORM");
 
 class servicesLote {
   constructor() {
@@ -50,113 +9,62 @@ class servicesLote {
 
   // Método GET para obtener todos los lotes
 
+  // Version liviana: solo lo que se usa hoy (revisar numero_lote existente
+  // al registrar una compra). Antes traia el inventario completo de cada
+  // producto por cada lote, lo que la hacia muy lenta (miles de filas).
   async getAllLotes() {
     try {
-      const lotes = await Lote.findAll({
-        include: [
-          {
-            model: Producto,
-            as: "producto",
-            where: {
-              activo: {
-                [Op.ne]: false,
-              },
-            },
-            required: true,
-            attributes: [
-              "nombre",
-              "codigo_barra",
-              "precio",
-              "stock",
-              "peso",
-              "subCantidad",
-            ],
-            include: [
-              {
-                model: MetodoVenta,
-                as: "metodosVenta",
-                attributes: [
-                  "id_metodo_venta",
-                  "descripcion",
-                  "cantidad_por_metodo",
-                  "precio",
-                ],
-              },
-              {
-                model: Inventario,
-                as: "inventarios",
-                attributes: ["cantidad", "subCantidad", "peso"],
-              },
-            ],
-          },
-        ],
+      return await Lote.findAll({
+        attributes: ["id_lote", "id_producto", "numero_lote"],
+        raw: true,
       });
-      return lotes.map(loteConProductoActualizado);
     } catch (error) {
       console.error("Error fetching all lotes:", error);
       throw error;
     }
   }
 
-  // Medodo Get para obtener los 20 proximos a vencer
+  // Método GET para obtener los lotes próximos a vencer, por sucursal
 
-  async getTop20LotesPorVencer() {
+  async getTop20LotesPorVencer(filters = {}) {
     try {
-      // 1) Obtenemos TODOS los lotes ordenados
-      const lotes = await Lote.findAll({
-        include: [
-          {
-            model: Producto,
-            as: "producto",
-            where: {
-              activo: {
-                [Op.ne]: false,
-              },
-            },
-            required: true,
-            attributes: [
-              "nombre",
-              "codigo_barra",
-              "precio",
-              "stock",
-              "peso",
-              "subCantidad",
-            ],
-            include: [
-              {
-                model: Inventario,
-                as: "inventarios",
-                attributes: [
-                  "id_inventario",
-                  "id_producto",
-                  "id_lote",
-                  "cantidad",
-                  "subCantidad",
-                  "peso",
-                  "fecha_actualizacion",
-                  "id_trabajador",
-                ],
-              },
-            ],
-          },
-        ],
-        order: [["fecha_caducidad", "ASC"]],
-      });
+      const idSucursal = Number(filters?.id_sucursal);
+      const dias = Math.min(Math.max(Number(filters?.dias) || 90, 1), 3650);
+      const limit = Math.min(Math.max(Number(filters?.limit) || 20, 1), 100);
 
-      // 2) Filtramos: por cada lote, buscamos el inventario que tenga el mismo id_lote
-      const lotesConStock = lotes.filter((lote) => {
-        // Buscamos en el array de inventarios del producto
-        const inventarioDelLote = lote.producto.inventarios.find(
-          (inv) => inv.id_lote === lote.id_lote
-        );
-        // Sólo mantenemos el lote si encontramos un inventario y su cantidad > 0
-        return inventarioDelLote && inventarioDelLote.cantidad > 0;
-      });
+      const replacements = { dias, limit };
+      let filtroSucursal = "";
+      if (Number.isFinite(idSucursal) && idSucursal > 0) {
+        filtroSucursal = `AND i."id_sucursal" = :idSucursal`;
+        replacements.idSucursal = idSucursal;
+      }
 
-      // 3) Si efectivamente quieres devolver sólo los “top 20” que quedan tras filtrar:
-      const top20 = lotesConStock.slice(0, 500);
+      const lotes = await sequelize.query(
+        `
+          SELECT
+            l."id_lote",
+            l."numero_lote",
+            l."fecha_caducidad",
+            p."id_producto",
+            p."nombre",
+            p."codigo_barra",
+            i."id_sucursal",
+            GREATEST(COALESCE(i."cantidad", 0), COALESCE(i."subCantidad", 0))::int AS "unidades"
+          FROM "Lote" l
+          INNER JOIN "Inventario" i ON i."id_lote" = l."id_lote"
+          INNER JOIN "Producto" p ON p."id_producto" = l."id_producto"
+          WHERE l."fecha_caducidad" IS NOT NULL
+            AND l."fecha_caducidad" <= (CURRENT_DATE + (:dias || ' days')::interval)
+            AND GREATEST(COALESCE(i."cantidad", 0), COALESCE(i."subCantidad", 0)) > 0
+            AND COALESCE(p."activo", true) <> false
+            ${filtroSucursal}
+          ORDER BY l."fecha_caducidad" ASC
+          LIMIT :limit
+        `,
+        { type: QueryTypes.SELECT, replacements }
+      );
 
-      return top20.map(loteConProductoActualizado);
+      return lotes;
     } catch (error) {
       console.error("Error al obtener los 20 lotes por vencer:", error);
       throw error;

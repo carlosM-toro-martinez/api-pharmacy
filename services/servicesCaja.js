@@ -3,6 +3,7 @@ const MovimientoCaja = require("../models/MovimientoCaja");
 const sequelize = require("../libs/dbConexionORM");
 const { Trabajador, Sucursal } = require("../models");
 const SucursalService = require("./servicesSucursal");
+const { getNowLapaz } = require("../utils/dateUtils");
 
 const sucursalService = new SucursalService();
 
@@ -31,7 +32,7 @@ class servicesCaja {
         {
           monto_inicial,
           monto_final: monto_inicial,
-          fecha_apertura: new Date(),
+          fecha_apertura: getNowLapaz(),
           id_trabajador,
           id_sucursal: idSucursalOperacion,
         },
@@ -77,7 +78,7 @@ class servicesCaja {
           id_caja,
           tipo_movimiento: "cierre",
           monto: caja.monto_final,
-          fecha_movimiento: new Date(),
+          fecha_movimiento: getNowLapaz(),
           id_trabajador,
           motivo: "Cierre de caja",
           id_sucursal: idSucursalOperacion,
@@ -85,7 +86,7 @@ class servicesCaja {
         { transaction: t }
       );
 
-      caja.fecha_cierre = new Date();
+      caja.fecha_cierre = getNowLapaz();
       await caja.save({ transaction: t });
 
       await t.commit();

@@ -9,6 +9,9 @@ route.get("/", async (req, res) => {
   try {
     const products = await productService.getAllProducts({
       id_sucursal: req.query.id_sucursal || req.headers["x-sucursal-id"],
+      simple: req.query.simple === "true",
+      q: req.query.q,
+      limit: req.query.limit,
     });
     res.json(products);
   } catch (error) {
@@ -31,7 +34,8 @@ route.get("/:id", async (req, res) => {
 route.get("/:id/inventarios", async (req, res) => {
   try {
     const result = await productService.getInventariosByProductId(
-      req.params.id
+      req.params.id,
+      req.query.id_sucursal || req.headers["x-sucursal-id"]
     );
     res.json(result);
   } catch (error) {
