@@ -39,9 +39,14 @@ const buildOperacionKey = (tipo, dataVenta, detalles, id_caja) =>
     })),
   });
 
-function decrementar(nombre, actual, delta = 0) {
+function decrementar(nombreCampo, actual, delta = 0, nombreProducto = "") {
   const nuevo = actual - delta;
-  if (nuevo < 0) throw new Error(`${nombre} insuficiente`);
+  if (nuevo < 0) {
+    const etiqueta = nombreProducto ? `"${nombreProducto}"` : "el producto";
+    throw new Error(
+      `Stock insuficiente en ${etiqueta}: disponible ${actual}, solicitado ${delta} (${nombreCampo}).`
+    );
+  }
   return nuevo;
 }
 
@@ -170,6 +175,12 @@ class servicesVenta {
       if (!inv.id_lote) cantidad = 0;
       productosAfectados.add(id_producto);
 
+      const productoInfo = await Producto.findByPk(id_producto, {
+        transaction,
+        attributes: ["nombre"],
+      });
+      const nombreProducto = productoInfo?.nombre || `producto #${id_producto}`;
+
       await DetalleVenta.create(
         {
           id_venta,
@@ -193,10 +204,11 @@ class servicesVenta {
       inv.subCantidad = decrementar(
         "subCantidad",
         inv.subCantidad,
-        cantidad_unidad
+        cantidad_unidad,
+        nombreProducto
       );
-      inv.cantidad = decrementar("cantidad", inv.cantidad, cantidad);
-      inv.peso = decrementar("peso", inv.peso, peso);
+      inv.cantidad = decrementar("cantidad", inv.cantidad, cantidad, nombreProducto);
+      inv.peso = decrementar("peso", inv.peso, peso, nombreProducto);
       await inv.update(
         {
           cantidad: inv.cantidad,
@@ -266,6 +278,12 @@ class servicesVenta {
         if (!inv.id_lote) cantidad = 0;
         productosAfectados.add(id_producto);
 
+        const productoInfo = await Producto.findByPk(id_producto, {
+          transaction: t,
+          attributes: ["nombre"],
+        });
+        const nombreProducto = productoInfo?.nombre || `producto #${id_producto}`;
+
         // El stock real y autoritativo es el de este Inventario (lote +
         // sucursal); Producto.stock/subCantidad es solo una cache agregada
         // que se recalcula abajo con sincronizarStockProducto, asi que no se
@@ -273,10 +291,11 @@ class servicesVenta {
         inv.subCantidad = decrementar(
           "subCantidad",
           inv.subCantidad,
-          cantidad_unidad
+          cantidad_unidad,
+          nombreProducto
         );
-        inv.cantidad = decrementar("cantidad", inv.cantidad, cantidad);
-        inv.peso = decrementar("peso", inv.peso, peso);
+        inv.cantidad = decrementar("cantidad", inv.cantidad, cantidad, nombreProducto);
+        inv.peso = decrementar("peso", inv.peso, peso, nombreProducto);
 
         await inv.update(
           {
