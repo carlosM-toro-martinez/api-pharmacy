@@ -16,7 +16,7 @@ route.get("/", async (req, res) => {
     res.json(products);
   } catch (error) {
     console.error("Error fetching products:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.status(500).json({ error: error.message || "Internal Server Error" });
   }
 });
 
@@ -52,7 +52,7 @@ route.post("/", async (req, res) => {
     res.status(201).json(newProduct);
   } catch (error) {
     console.error("Error creating product:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.status(500).json({ error: error.message || "Internal Server Error" });
   }
 });
 
@@ -82,7 +82,7 @@ route.post("/buy", async (req, res) => {
     res.status(201).json(newProduct);
   } catch (error) {
     console.error("Error creating product:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.status(500).json({ error: error.message || "Internal Server Error" });
   }
 });
 

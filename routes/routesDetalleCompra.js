@@ -11,7 +11,7 @@ route.get("/", async (req, res) => {
     res.json(detallesCompra);
   } catch (error) {
     console.error("Error fetching detalles de compra:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.status(500).json({ error: error.message || "Internal Server Error" });
   }
 });
 
@@ -24,7 +24,7 @@ route.get("/:numeroLote", async (req, res) => {
     res.json(detallesCompra);
   } catch (error) {
     console.error("Error fetching detalles de compra by lote:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.status(500).json({ error: error.message || "Internal Server Error" });
   }
 });
 
@@ -51,7 +51,7 @@ route.post("/", async (req, res) => {
     res.status(201).json(newDetalleCompra);
   } catch (error) {
     console.error("Error creating detalle de compra:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.status(500).json({ error: error.message || "Internal Server Error" });
   }
 });
 

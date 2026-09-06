@@ -445,21 +445,11 @@ class servicesProducto {
       const results = [];
 
       for (const item of filteredArrayData) {
-        const existingLote = item.detalleCompraData.numero_lote
-          ? await Lote.findOne({
-              where: {
-                id_producto: item.detalleCompraData.id_producto,
-                numero_lote: item.detalleCompraData.numero_lote,
-              },
-              transaction,
-            })
-          : null;
-
-        if (existingLote) {
-          throw new Error(
-            `El lote ${item.detalleCompraData.numero_lote} ya existe para este producto`
-          );
-        }
+        // El numero de lote puede repetirse a proposito: un mismo codigo de
+        // lote del proveedor puede volver a aparecer en una compra distinta
+        // (otro envio/reposicion), y cada compra debe registrar su propio
+        // Lote (con su propia cantidad, fecha de ingreso y DetalleCompra),
+        // no reutilizar ni rechazar el anterior.
 
         // La hora de registro la pone el servidor, no el navegador de quien
         // registra la compra (la fecha de caducidad si es la que elige el usuario).
