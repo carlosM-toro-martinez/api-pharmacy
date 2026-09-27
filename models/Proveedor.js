@@ -15,6 +15,10 @@ Proveedor.init(
     email: DataTypes.STRING,
     direccion: DataTypes.STRING,
     nitci: DataTypes.STRING,
+    activo: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+    },
   },
   {
     sequelize,

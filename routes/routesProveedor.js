@@ -11,7 +11,7 @@ route.get("/", async (req, res) => {
     res.json(proveedores);
   } catch (error) {
     console.error("Error fetching proveedores:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.status(500).json({ error: error.message || "Internal Server Error" });
   }
 });
 
@@ -34,7 +34,7 @@ route.post("/", async (req, res) => {
     res.status(201).json(newProveedor);
   } catch (error) {
     console.error("Error creating proveedor:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.status(500).json({ error: error.message || "Internal Server Error" });
   }
 });
 

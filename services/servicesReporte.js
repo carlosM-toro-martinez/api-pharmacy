@@ -762,9 +762,21 @@ class servicesReporte {
       ],
     });
 
+    // Antes solo se incluía "Salida sin venta", dejando afuera las
+    // transferencias entre sucursales — el saldo reconstruido (ver
+    // HistoryProductComponent en el frontend) partía del stock real actual
+    // y restaba/sumaba únicamente los movimientos de esta lista, así que
+    // cualquier transferencia (no visible aquí) generaba un descuadre que
+    // podía mostrarse como cantidades negativas en el historial.
     const movimientosWhere = {
       id_producto,
-      tipo_movimiento: "Salida sin venta",
+      tipo_movimiento: {
+        [Op.in]: [
+          "Salida sin venta",
+          "Transferencia salida",
+          "Transferencia entrada",
+        ],
+      },
     };
     if (filtrarPorSucursal) movimientosWhere.id_sucursal = idSucursal;
 

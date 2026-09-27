@@ -56,17 +56,20 @@ class servicesProveedor {
     }
   }
 
-  // Método DELETE para eliminar un proveedor por id_proveedor
+  // "Eliminar" un proveedor en realidad lo da de baja (activo=false), no lo
+  // borra: un proveedor casi siempre tiene compras asociadas (DetalleCompra),
+  // y borrarlo de verdad rompería ese historial o fallaría por la relación.
+  // Dar de baja lo saca de los selectores pero conserva todo lo registrado.
   async deleteProveedor(id_proveedor) {
     try {
       const proveedor = await Proveedor.findByPk(id_proveedor);
       if (!proveedor) {
         throw new Error(`Proveedor with ID ${id_proveedor} not found`);
       }
-      await proveedor.destroy();
-      return { message: "Proveedor deleted successfully" };
+      await proveedor.update({ activo: false });
+      return { message: "Proveedor dado de baja correctamente" };
     } catch (error) {
-      console.error("Error deleting proveedor:", error);
+      console.error("Error dando de baja al proveedor:", error);
       throw error;
     }
   }
