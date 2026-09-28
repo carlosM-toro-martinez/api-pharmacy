@@ -278,12 +278,13 @@ class servicesInventario {
                 THEN COALESCE(i."subCantidad", 0)
                 ELSE COALESCE(i."cantidad", 0)
               END
-            )::int AS "subCantidad"
+            )::int AS "subCantidad",
+            MAX(l."precioVenta") AS "precioVenta"
           FROM "Inventario" i
           INNER JOIN "Producto" p ON p."id_producto" = i."id_producto"
           INNER JOIN "Sucursal" s ON s."id_sucursal" = i."id_sucursal"
-          WHERE (COALESCE(i."subCantidad", 0) > 0 OR COALESCE(i."cantidad", 0) > 0)
-            AND COALESCE(p."activo", true) <> false
+          LEFT JOIN "Lote" l ON l."id_lote" = i."id_lote"
+          WHERE COALESCE(p."activo", true) <> false
             AND COALESCE(s."activo", true) <> false
             AND (
               LOWER(p."nombre") LIKE :busqueda
@@ -309,6 +310,10 @@ class servicesInventario {
             codigo_barra: fila.codigo_barra,
             concentracion: fila.concentracion,
             forma_farmaceutica: fila.forma_farmaceutica,
+            // El precio de venta se comparte entre todos los lotes/sucursales
+            // de un mismo producto (asi se actualiza en el resto del
+            // sistema), asi que se muestra una sola vez por producto.
+            precioVenta: fila.precioVenta != null ? toNumber(fila.precioVenta) : null,
             sucursales: [],
           });
         }
