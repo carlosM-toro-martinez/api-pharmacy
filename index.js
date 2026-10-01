@@ -11,6 +11,11 @@ const Permiso = db.Permiso;
 const passport = require("passport");
 const requestLogger = require("./middlewares/requestLogger");
 const SucursalService = require("./services/servicesSucursal");
+const { instalarLoggerDeErrores } = require("./utils/errorFileLogger");
+
+// Se instala lo antes posible para capturar tambien errores de arranque
+// (conexion a la base de datos, etc.), no solo los de requests.
+instalarLoggerDeErrores();
 
 require("./middlewares/passportConfig")(passport);
 
@@ -29,6 +34,22 @@ const singleResponseGuard = require("./middlewares/singleResponseGuard");
 app.use(singleResponseGuard);
 
 router(app);
+
+// Red de seguridad: cualquier error que ninguna ruta haya atrapado con su
+// propio try/catch llega aca en vez de tumbar el proceso en silencio, y
+// tambien queda en el archivo de logs (console.error ya escribe ahi).
+app.use((err, req, res, next) => {
+  console.error(`Error no manejado en ${req.method} ${req.originalUrl}:`, err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: err.message || "Internal Server Error" });
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("unhandledRejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("uncaughtException:", err);
+});
 
 // app.use(express.static(path.join(__dirname, "dist")));
 

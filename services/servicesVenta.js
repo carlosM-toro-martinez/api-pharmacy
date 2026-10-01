@@ -16,6 +16,19 @@ const ajustesService = new AjustesService();
 const sucursalService = new SucursalService();
 const operacionesEnProceso = new Set();
 const operacionesProcesadas = new Map();
+// Cuanto tiempo se recuerda el resultado de una venta/movimiento ya
+// terminado para no duplicarlo si llega la MISMA peticion de nuevo (un
+// doble clic, o un reintento automatico de red). Antes eran 10 minutos:
+// si un trabajador vendia, por ejemplo, 2 unidades de un producto barato
+// a "Cliente por defecto" pagando Contado, y minutos despues vendia
+// exactamente lo mismo otra vez (mismo producto/cantidad/precio/cliente/
+// metodo de pago) a otro cliente real, el sistema lo trataba como el
+// MISMO pedido y le devolvia el resultado de la primera venta -
+// "Venta realizada exitosamente" en pantalla, pero sin crear nada nuevo
+// ni descontar stock la segunda vez. Un doble clic real llega en milisegundos,
+// no minutos, asi que unos segundos alcanzan para protegerlo sin arriesgar
+// ventas genuinas que por coincidencia tengan los mismos datos.
+const VENTANA_DEDUP_MS = 8000;
 
 const toNumber = (value) => {
   const number = Number(value);
@@ -82,6 +95,9 @@ class servicesVenta {
     }
 
     if (operacionesProcesadas.has(operacionKey)) {
+      console.error(
+        `Venta duplicada detectada (misma venta repetida dentro de ${VENTANA_DEDUP_MS}ms): se devuelve el resultado anterior sin crear una nueva. id_trabajador=${dataVenta?.id_trabajador} id_sucursal=${dataVenta?.id_sucursal} total=${dataVenta?.total}`
+      );
       return operacionesProcesadas.get(operacionKey);
     }
 
@@ -104,7 +120,7 @@ class servicesVenta {
       await this.actualizarPuntosCliente(clienteId, t);
 
       operacionesProcesadas.set(operacionKey, venta);
-      setTimeout(() => operacionesProcesadas.delete(operacionKey), 1000 * 60 * 10);
+      setTimeout(() => operacionesProcesadas.delete(operacionKey), VENTANA_DEDUP_MS);
 
       return venta;
     });
@@ -249,6 +265,9 @@ class servicesVenta {
     }
 
     if (operacionesProcesadas.has(operacionKey)) {
+      console.error(
+        `Movimiento de inventario duplicado detectado (mismo movimiento repetido dentro de ${VENTANA_DEDUP_MS}ms): se devuelve el resultado anterior sin crear uno nuevo. id_sucursal=${dataVenta?.id_sucursal}`
+      );
       return operacionesProcesadas.get(operacionKey);
     }
 
@@ -327,7 +346,7 @@ class servicesVenta {
 
       const resultado = { success: true };
       operacionesProcesadas.set(operacionKey, resultado);
-      setTimeout(() => operacionesProcesadas.delete(operacionKey), 1000 * 60 * 10);
+      setTimeout(() => operacionesProcesadas.delete(operacionKey), VENTANA_DEDUP_MS);
 
       return resultado;
     });
