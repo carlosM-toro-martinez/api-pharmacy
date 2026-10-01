@@ -28,7 +28,7 @@ const operacionesProcesadas = new Map();
 // ni descontar stock la segunda vez. Un doble clic real llega en milisegundos,
 // no minutos, asi que unos segundos alcanzan para protegerlo sin arriesgar
 // ventas genuinas que por coincidencia tengan los mismos datos.
-const VENTANA_DEDUP_MS = 8000;
+const VENTANA_DEDUP_MS = 5000;
 
 const toNumber = (value) => {
   const number = Number(value);
