@@ -415,32 +415,77 @@ class servicesAjustes {
     };
   }
 
-  async limpiarRegistrosVacios() {
-    return await sequelize.transaction(async (transaction) => {
-      const idsLotesBorrables = await this.obtenerIdsLotesVaciosBorrables(
-        transaction
-      );
+  // Antes esta funcion borraba directamente los inventarios en cero y los
+  // lotes vacios sin ventas asociadas. Eso resulto destruir la unica
+  // evidencia de descuadres reales: un lote puede llegar a stock real
+  // (creado por ejemplo via los endpoints genericos POST /lotes o
+  // POST /inventario, que no generan compra ni movimiento) y luego vaciarse
+  // por una "Salida sin venta" sin haber tenido nunca una venta asociada;
+  // al no tener DetalleVenta, calificaba como "borrable" y desaparecia sin
+  // dejar rastro, dejando al historial con una resta sin su suma. Ahora solo
+  // se lista para revision manual; no se elimina nada automaticamente.
+  async revisarRegistrosVacios() {
+    const idsLotesBorrables = await this.obtenerIdsLotesVaciosBorrables();
 
-      const inventariosEliminados = await Inventario.destroy({
-        where: this.getInventarioVacioWhere(),
-        transaction,
-      });
+    const inventariosVacios = await sequelize.query(
+      `
+        SELECT
+          i."id_inventario",
+          i."id_producto",
+          p."nombre" AS producto,
+          i."id_lote",
+          l."numero_lote",
+          i."id_sucursal",
+          s."nombre" AS sucursal,
+          EXISTS (
+            SELECT 1 FROM "MovimientoInventario" m
+            WHERE m."lote" = i."id_lote"::text
+          ) AS "tieneMovimientoAsociado"
+        FROM "Inventario" i
+        JOIN "Producto" p ON p."id_producto" = i."id_producto"
+        LEFT JOIN "Lote" l ON l."id_lote" = i."id_lote"
+        LEFT JOIN "Sucursal" s ON s."id_sucursal" = i."id_sucursal"
+        WHERE COALESCE(i."cantidad", 0) = 0
+          AND COALESCE(i."subCantidad", 0) = 0
+          AND COALESCE(i."peso", 0) = 0
+        ORDER BY "tieneMovimientoAsociado" DESC, p."nombre" ASC
+      `,
+      { type: QueryTypes.SELECT }
+    );
 
-      const lotesEliminados = idsLotesBorrables.length
-        ? await Lote.destroy({
-            where: {
-              id_lote: idsLotesBorrables,
-            },
-            transaction,
-          })
-        : 0;
+    const lotesVaciosBorrables = idsLotesBorrables.length
+      ? await sequelize.query(
+          `
+            SELECT
+              l."id_lote",
+              l."numero_lote",
+              l."id_producto",
+              p."nombre" AS producto,
+              EXISTS (
+                SELECT 1 FROM "MovimientoInventario" m
+                WHERE m."lote" = l."id_lote"::text
+              ) AS "tieneMovimientoAsociado"
+            FROM "Lote" l
+            JOIN "Producto" p ON p."id_producto" = l."id_producto"
+            WHERE l."id_lote" IN (:ids)
+            ORDER BY "tieneMovimientoAsociado" DESC, p."nombre" ASC
+          `,
+          { type: QueryTypes.SELECT, replacements: { ids: idsLotesBorrables } }
+        )
+      : [];
 
-      return {
-        message: "Mantenimiento de inventario finalizado.",
-        inventariosEliminados,
-        lotesEliminados,
-      };
-    });
+    const totalConMovimientoAsociado =
+      inventariosVacios.filter((fila) => fila.tieneMovimientoAsociado).length +
+      lotesVaciosBorrables.filter((fila) => fila.tieneMovimientoAsociado)
+        .length;
+
+    return {
+      totalInventariosVacios: inventariosVacios.length,
+      totalLotesVaciosBorrables: lotesVaciosBorrables.length,
+      totalConMovimientoAsociado,
+      inventariosVacios,
+      lotesVaciosBorrables,
+    };
   }
 
   async auditarProveedoresDivergentes() {

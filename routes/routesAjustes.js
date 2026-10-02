@@ -34,12 +34,12 @@ route.get("/mantenimiento", async (req, res) => {
   }
 });
 
-route.post("/limpiar-registros-vacios", async (req, res) => {
+route.get("/registros-vacios", async (req, res) => {
   try {
-    const resultado = await ajustesService.limpiarRegistrosVacios();
+    const resultado = await ajustesService.revisarRegistrosVacios();
     res.json(resultado);
   } catch (error) {
-    console.error("Error limpiando registros vacios:", error);
+    console.error("Error revisando registros vacios:", error);
     res.status(500).json({ error: error.message });
   }
 });
