@@ -179,12 +179,20 @@ class servicesVenta {
         clienteId,
       } = det;
 
+      // lock:true (SELECT ... FOR UPDATE) para que si dos ventas del mismo
+      // lote se procesan casi al mismo tiempo, la segunda espere a que la
+      // primera termine en vez de leer el mismo numero de partida: sin
+      // esto, las dos podian calcular su descuento sobre el mismo valor y
+      // la ultima en guardar "pisaba" el descuento de la otra, dejando el
+      // inventario con mas unidades de las realmente vendidas (quedaban
+      // registradas ambas ventas, pero el inventario solo bajaba una vez).
       const inv = await Inventario.findOne({
         where: {
           id_producto,
           id_lote: id_lote || null,
           id_sucursal: idSucursalOperacion,
         },
+        lock: true,
         transaction,
       });
       if (!inv) throw new Error("Inventario no encontrado para producto/lote");
@@ -290,6 +298,7 @@ class servicesVenta {
             id_lote: id_lote || null,
             id_sucursal: idSucursalOperacion,
           },
+          lock: true,
           transaction: t,
         });
         if (!inv)
@@ -397,6 +406,7 @@ class servicesVenta {
         // Restaurar inventario del lote
         const inv = await Inventario.findOne({
           where: { id_producto, id_lote, id_sucursal: idSucursalOperacion },
+          lock: true,
           transaction: t,
         });
         if (!inv)
