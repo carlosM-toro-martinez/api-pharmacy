@@ -601,13 +601,56 @@ class servicesAjustes {
           FROM "MovimientoInventario"
           WHERE "tipo_movimiento" = 'Transferencia salida'
           GROUP BY "id_sucursal", "id_producto"
+        ),
+        -- Lotes sin ninguna compra detras (id_detalle_compra NULL): stock
+        -- que entro por una via que no es "comprar" (ej. saldo inicial
+        -- cargado manualmente al dar de alta un producto o sucursal, antes
+        -- de que existiera un proveedor/precio para registrarlo como
+        -- compra). Lote.subCantidad nunca se actualiza despues de creado
+        -- (solo Inventario.subCantidad baja con las ventas), asi que es la
+        -- cantidad ORIGINAL con la que entro ese lote, igual que
+        -- DetalleCompra.subCantidad para una compra normal.
+        saldoInicial AS (
+          SELECT i."id_producto", i."id_sucursal",
+            SUM(COALESCE(l."subCantidad", 0)) AS "totalSaldoInicial"
+          FROM "Lote" l
+          JOIN "Inventario" i ON i."id_lote" = l."id_lote"
+          WHERE l."id_detalle_compra" IS NULL
+          GROUP BY i."id_producto", i."id_sucursal"
+        ),
+        -- Caso de los lotes ya borrados por la vieja limpieza automatica
+        -- (ver revisarRegistrosVacios): su Lote ya no existe, pero el
+        -- movimiento que los vacio ("Salida sin venta" o "Transferencia
+        -- salida") sigue apuntando a ese id_lote como texto en la columna
+        -- "lote". Si ese id ya no corresponde a ningun Lote actual, es
+        -- saldo inicial fantasma: la cantidad que se resto aqui nunca se
+        -- sumo como compra ni como saldo inicial (porque su fila ya no
+        -- existe), asi que hay que recuperarla igual para no quedar como
+        -- "descuadre" permanente.
+        loteFantasma AS (
+          SELECT m."id_producto", m."id_sucursal",
+            SUM(COALESCE(m."subCantidad", 0)) AS "totalSaldoInicialFantasma"
+          FROM "MovimientoInventario" m
+          WHERE m."tipo_movimiento" IN ('Salida sin venta', 'Transferencia salida')
+            AND m."lote" ~ '^[0-9]+$'
+            AND NOT EXISTS (
+              SELECT 1 FROM "Lote" l WHERE l."id_lote" = m."lote"::int
+            )
+          GROUP BY m."id_producto", m."id_sucursal"
         )
         SELECT
           p."id_producto", p."nombre", p."codigo_barra",
           ir."id_sucursal", ir."sucursal",
           ir."stockReal" AS "stockReal",
+          COALESCE(c."totalCompras", 0) AS "totalCompras",
+          (
+            COALESCE(si."totalSaldoInicial", 0)
+            + COALESCE(lf."totalSaldoInicialFantasma", 0)
+          ) AS "totalSaldoInicial",
           (
             COALESCE(c."totalCompras", 0)
+            + COALESCE(si."totalSaldoInicial", 0)
+            + COALESCE(lf."totalSaldoInicialFantasma", 0)
             - COALESCE(v."totalVentas", 0)
             - COALESCE(sa."totalSalidas", 0)
             - COALESCE(ts."totalTransferenciaSalida", 0)
@@ -618,6 +661,8 @@ class servicesAjustes {
         LEFT JOIN ventas v ON v."id_producto" = ir."id_producto" AND v."id_sucursal" = ir."id_sucursal"
         LEFT JOIN salidas sa ON sa."id_producto" = ir."id_producto" AND sa."id_sucursal" = ir."id_sucursal"
         LEFT JOIN transferenciasSalida ts ON ts."id_producto" = ir."id_producto" AND ts."id_sucursal" = ir."id_sucursal"
+        LEFT JOIN saldoInicial si ON si."id_producto" = ir."id_producto" AND si."id_sucursal" = ir."id_sucursal"
+        LEFT JOIN loteFantasma lf ON lf."id_producto" = ir."id_producto" AND lf."id_sucursal" = ir."id_sucursal"
         WHERE COALESCE(p."activo", true) <> false
         ORDER BY p."nombre", ir."sucursal"
       `,
@@ -633,6 +678,8 @@ class servicesAjustes {
         sucursal: fila.sucursal,
         stockReal: toNumber(fila.stockReal),
         stockEsperado: toNumber(fila.stockEsperado),
+        totalCompras: toNumber(fila.totalCompras),
+        totalSaldoInicial: toNumber(fila.totalSaldoInicial),
         diferencia: round2(toNumber(fila.stockReal) - toNumber(fila.stockEsperado)),
       }))
       .filter((fila) => Math.abs(fila.diferencia) > 0.01)
