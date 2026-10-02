@@ -64,6 +64,16 @@ route.get("/descuadre-stock", async (req, res) => {
   }
 });
 
+route.get("/lotes-sobrevendidos", async (req, res) => {
+  try {
+    const sobrevendidos = await ajustesService.auditarLotesSobrevendidos();
+    res.json(sobrevendidos);
+  } catch (error) {
+    console.error("Error auditando lotes sobrevendidos:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 route.get("/inventarios-negativos", async (req, res) => {
   try {
     const negativos = await ajustesService.auditarInventariosNegativos();

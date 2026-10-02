@@ -692,6 +692,71 @@ class servicesAjustes {
     };
   }
 
+  // Detalle por LOTE (no por producto+sucursal) de donde sale cada
+  // diferencia que encuentra auditarDescuadreStock(): un lote cuyas ventas
+  // + salidas superan lo que se compro para el. Como Inventario no puede
+  // bajar de 0 (decrementar() revienta antes), un lote sobrevendido queda
+  // en 0 en vez del negativo que matematicamente le corresponderia, y esa
+  // diferencia es justamente lo que hace que el stock real de todo el
+  // producto/sucursal quede por encima de lo esperado.
+  async auditarLotesSobrevendidos() {
+    const filas = await sequelize.query(
+      `
+        WITH vendidos AS (
+          SELECT "id_lote", SUM(COALESCE("subCantidad", 0)) AS "vendido"
+          FROM "DetalleVenta"
+          GROUP BY "id_lote"
+        ),
+        salidas AS (
+          SELECT "lote"::int AS "id_lote", SUM(COALESCE("subCantidad", 0)) AS "salida"
+          FROM "MovimientoInventario"
+          WHERE "tipo_movimiento" IN ('Salida sin venta', 'Transferencia salida')
+            AND "lote" ~ '^[0-9]+$'
+          GROUP BY "lote"::int
+        )
+        SELECT
+          p."id_producto", p."nombre", p."codigo_barra",
+          s."id_sucursal", s."nombre" AS "sucursal",
+          l."id_lote", l."numero_lote", dc."fecha_compra",
+          dc."subCantidad" AS "comprado",
+          COALESCE(v."vendido", 0) AS "vendido",
+          COALESCE(sa."salida", 0) AS "salida",
+          COALESCE(i."subCantidad", 0) AS "stockReal",
+          (COALESCE(v."vendido", 0) + COALESCE(sa."salida", 0) - dc."subCantidad") AS "sobreventa"
+        FROM "Lote" l
+        JOIN "DetalleCompra" dc ON dc."id_detalle" = l."id_detalle_compra"
+        JOIN "Producto" p ON p."id_producto" = l."id_producto"
+        JOIN "Inventario" i ON i."id_lote" = l."id_lote"
+        JOIN "Sucursal" s ON s."id_sucursal" = i."id_sucursal"
+        LEFT JOIN vendidos v ON v."id_lote" = l."id_lote"
+        LEFT JOIN salidas sa ON sa."id_lote" = l."id_lote"
+        WHERE (COALESCE(v."vendido", 0) + COALESCE(sa."salida", 0)) > dc."subCantidad"
+          AND COALESCE(p."activo", true) <> false
+        ORDER BY "sobreventa" DESC
+      `,
+      { type: QueryTypes.SELECT }
+    );
+
+    return {
+      totalLotesSobrevendidos: filas.length,
+      lotes: filas.map((fila) => ({
+        id_producto: fila.id_producto,
+        nombre: fila.nombre,
+        codigo_barra: fila.codigo_barra,
+        id_sucursal: fila.id_sucursal,
+        sucursal: fila.sucursal,
+        id_lote: fila.id_lote,
+        numero_lote: fila.numero_lote,
+        fecha_compra: fila.fecha_compra,
+        comprado: toNumber(fila.comprado),
+        vendido: toNumber(fila.vendido),
+        salida: toNumber(fila.salida),
+        stockReal: toNumber(fila.stockReal),
+        sobreventa: toNumber(fila.sobreventa),
+      })),
+    };
+  }
+
   async resumenAuditoria() {
     // La comparacion Producto vs Inventario (auditarStock) queda fuera de
     // este resumen automatico: desde que Stock Inicial y Transferencias
