@@ -703,7 +703,7 @@ class servicesReporte {
     const idSucursal = Number(filters.id_sucursal);
     const filtrarPorSucursal = Number.isFinite(idSucursal) && idSucursal > 0;
 
-    const compras = await DetalleCompra.findAll({
+    const comprasSinFiltrar = await DetalleCompra.findAll({
       where: { id_producto },
       distinct: true,
       include: [
@@ -720,7 +720,9 @@ class servicesReporte {
         {
           model: Lote,
           as: "lotes",
-          attributes: [],
+          // Se necesita numero_lote para filtrar abajo las compras
+          // "sinteticas" que genera una transferencia (ver nota).
+          attributes: ["numero_lote"],
           required: filtrarPorSucursal,
           include: filtrarPorSucursal
             ? [
@@ -736,6 +738,23 @@ class servicesReporte {
         },
       ],
     });
+
+    // Cada transferencia crea, ademas del movimiento "Transferencia
+    // entrada/salida", una DetalleCompra+Lote "sintetica" en la sucursal
+    // destino (para que el lote transferido no dependa del registro de
+    // compra original). Esa compra sintetica se reconoce porque su lote
+    // arranca con "TRANSFERENCIA-". Si se la deja en este listado, la
+    // misma entrada de stock aparece dos veces en el historial: una vez
+    // como "compra" y otra como "Transferencia entrada" (el movimiento
+    // real). Se excluye aqui para que cada transferencia se vea una sola
+    // vez; el stock real nunca estuvo duplicado, esto es solo para que
+    // el historial no cuente de mas.
+    const compras = comprasSinFiltrar.filter(
+      (compra) =>
+        !(compra.lotes || []).some((lote) =>
+          lote.numero_lote?.startsWith("TRANSFERENCIA-")
+        )
+    );
 
     const ventas = await DetalleVenta.findAll({
       where: { id_producto },

@@ -434,6 +434,21 @@ class servicesProducto {
 
     console.log("Array filtrado sin duplicados:", filteredArrayData);
 
+    // Una compra con cantidad negativa no tiene sentido (es una entrada de
+    // stock, no una salida) y dejaba lotes en negativo desde el momento en
+    // que se creaban, sin pasar por ninguna venta ni movimiento. Se
+    // rechaza aqui, antes de tocar la base de datos.
+    for (const item of filteredArrayData) {
+      const cantidad = Number(item.detalleCompraData?.cantidad);
+      const subCantidad = Number(item.detalleCompraData?.subCantidad);
+      const nombreProducto = item.detalleCompraData?.nombre || `producto #${item.detalleCompraData?.id_producto}`;
+      if ((Number.isFinite(cantidad) && cantidad < 0) || (Number.isFinite(subCantidad) && subCantidad < 0)) {
+        throw new Error(
+          `La cantidad de "${nombreProducto}" no puede ser negativa (cantidad=${item.detalleCompraData?.cantidad}, subCantidad=${item.detalleCompraData?.subCantidad}).`
+        );
+      }
+    }
+
     const transaction = await sequelize.transaction();
 
     // Si no se indica un numero de factura, se genera uno automatico

@@ -54,6 +54,16 @@ route.get("/inventarios-huerfanos", async (req, res) => {
   }
 });
 
+route.get("/descuadre-stock", async (req, res) => {
+  try {
+    const descuadre = await ajustesService.auditarDescuadreStock();
+    res.json(descuadre);
+  } catch (error) {
+    console.error("Error auditando descuadre de stock:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 route.get("/inventarios-negativos", async (req, res) => {
   try {
     const negativos = await ajustesService.auditarInventariosNegativos();

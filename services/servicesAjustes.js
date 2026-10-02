@@ -509,6 +509,97 @@ class servicesAjustes {
     };
   }
 
+  // Compara, para cada producto Y SUCURSAL por separado, el stock real
+  // (suma de Inventario) contra lo que deberia haber segun el libro mayor
+  // real: compras (incluye la compra "sintetica" que genera cada
+  // transferencia, porque esa si representa una entrada real a esa
+  // sucursal) menos ventas, menos salidas sin venta, menos lo que salio
+  // de esa sucursal por transferencia. Es deliberadamente por sucursal
+  // (no solo el total del producto): un lote puede estar mal aunque el
+  // total del producto cuadre, si el descuadre esta en una sucursal y se
+  // compensa con otra.
+  async auditarDescuadreStock() {
+    const filas = await sequelize.query(
+      `
+        WITH inventario_real AS (
+          SELECT i."id_producto", i."id_sucursal", s."nombre" AS "sucursal",
+            SUM(COALESCE(i."subCantidad", 0)) AS "stockReal"
+          FROM "Inventario" i
+          JOIN "Sucursal" s ON s."id_sucursal" = i."id_sucursal"
+          GROUP BY i."id_producto", i."id_sucursal", s."nombre"
+        ),
+        compras AS (
+          SELECT i."id_producto", i."id_sucursal",
+            SUM(COALESCE(dc."subCantidad", 0)) AS "totalCompras"
+          FROM "DetalleCompra" dc
+          JOIN "Lote" l ON l."id_detalle_compra" = dc."id_detalle"
+          JOIN "Inventario" i ON i."id_lote" = l."id_lote"
+          GROUP BY i."id_producto", i."id_sucursal"
+        ),
+        ventas AS (
+          SELECT v."id_sucursal", dv."id_producto",
+            SUM(COALESCE(dv."subCantidad", 0)) AS "totalVentas"
+          FROM "DetalleVenta" dv
+          JOIN "Venta" v ON v."id_venta" = dv."id_venta"
+          GROUP BY v."id_sucursal", dv."id_producto"
+        ),
+        salidas AS (
+          SELECT "id_sucursal", "id_producto",
+            SUM(COALESCE("subCantidad", 0)) AS "totalSalidas"
+          FROM "MovimientoInventario"
+          WHERE "tipo_movimiento" = 'Salida sin venta'
+          GROUP BY "id_sucursal", "id_producto"
+        ),
+        transferenciasSalida AS (
+          SELECT "id_sucursal", "id_producto",
+            SUM(COALESCE("subCantidad", 0)) AS "totalTransferenciaSalida"
+          FROM "MovimientoInventario"
+          WHERE "tipo_movimiento" = 'Transferencia salida'
+          GROUP BY "id_sucursal", "id_producto"
+        )
+        SELECT
+          p."id_producto", p."nombre", p."codigo_barra",
+          ir."id_sucursal", ir."sucursal",
+          ir."stockReal" AS "stockReal",
+          (
+            COALESCE(c."totalCompras", 0)
+            - COALESCE(v."totalVentas", 0)
+            - COALESCE(sa."totalSalidas", 0)
+            - COALESCE(ts."totalTransferenciaSalida", 0)
+          ) AS "stockEsperado"
+        FROM inventario_real ir
+        JOIN "Producto" p ON p."id_producto" = ir."id_producto"
+        LEFT JOIN compras c ON c."id_producto" = ir."id_producto" AND c."id_sucursal" = ir."id_sucursal"
+        LEFT JOIN ventas v ON v."id_producto" = ir."id_producto" AND v."id_sucursal" = ir."id_sucursal"
+        LEFT JOIN salidas sa ON sa."id_producto" = ir."id_producto" AND sa."id_sucursal" = ir."id_sucursal"
+        LEFT JOIN transferenciasSalida ts ON ts."id_producto" = ir."id_producto" AND ts."id_sucursal" = ir."id_sucursal"
+        WHERE COALESCE(p."activo", true) <> false
+        ORDER BY p."nombre", ir."sucursal"
+      `,
+      { type: QueryTypes.SELECT }
+    );
+
+    const conDiferencia = filas
+      .map((fila) => ({
+        id_producto: fila.id_producto,
+        nombre: fila.nombre,
+        codigo_barra: fila.codigo_barra,
+        id_sucursal: fila.id_sucursal,
+        sucursal: fila.sucursal,
+        stockReal: toNumber(fila.stockReal),
+        stockEsperado: toNumber(fila.stockEsperado),
+        diferencia: round2(toNumber(fila.stockReal) - toNumber(fila.stockEsperado)),
+      }))
+      .filter((fila) => Math.abs(fila.diferencia) > 0.01)
+      .sort((a, b) => Math.abs(b.diferencia) - Math.abs(a.diferencia));
+
+    return {
+      totalFilasRevisadas: filas.length,
+      totalConDiferencia: conDiferencia.length,
+      diferencias: conDiferencia,
+    };
+  }
+
   async resumenAuditoria() {
     // La comparacion Producto vs Inventario (auditarStock) queda fuera de
     // este resumen automatico: desde que Stock Inicial y Transferencias
