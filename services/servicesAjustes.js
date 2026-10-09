@@ -870,7 +870,7 @@ class servicesAjustes {
             COUNT(*)::int AS "cantidadVentasAfectadas",
             MAX(df."fecha_venta") AS "fechaMasReciente"
           FROM duplicadosFiltrados df
-          JOIN "Producto" p ON p."id_producto" = df."id_producto"
+          JOIN "Producto" p ON p."id_producto" = df."id_producto" AND COALESCE(p."activo", true) <> false
           JOIN "Sucursal" s ON s."id_sucursal" = df."id_sucursal"
           GROUP BY df."id_producto", p."nombre", p."codigo_barra", p."forma_farmaceutica",
             p."concentracion", df."id_sucursal", s."nombre"
