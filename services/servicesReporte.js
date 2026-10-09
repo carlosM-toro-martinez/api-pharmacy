@@ -1148,6 +1148,14 @@ class servicesReporte {
           FROM "DetalleCompra"
           WHERE precio_unitario IS NOT NULL
           ORDER BY id_producto, id_detalle DESC
+        ),
+        stock_actual AS (
+          SELECT
+            "id_producto",
+            SUM("cantidad")::int AS "cantidad",
+            SUM("subCantidad")::int AS "subCantidad"
+          FROM "Inventario"
+          GROUP BY "id_producto"
         )
         SELECT
           p."id_producto",
@@ -1156,21 +1164,29 @@ class servicesReporte {
           p."forma_farmaceutica",
           p."concentracion",
           upc."precio_unitario" AS "precioCompra",
-          upv."precioVenta" AS "precioVenta"
+          upv."precioVenta" AS "precioVenta",
+          COALESCE(sa."cantidad", 0) AS "stockCantidad",
+          COALESCE(sa."subCantidad", 0) AS "stockActual"
         FROM "Producto" p
         LEFT JOIN ultimo_precio_compra upc ON upc."id_producto" = p."id_producto"
         LEFT JOIN ultimo_precio_venta upv ON upv."id_producto" = p."id_producto"
+        LEFT JOIN stock_actual sa ON sa."id_producto" = p."id_producto"
         WHERE COALESCE(p."activo", true) <> false
         ORDER BY p."nombre" ASC
       `,
       { type: QueryTypes.SELECT }
     );
 
+    let totalStockActual = 0;
+    let totalValorCosto = 0;
+    let totalValorVenta = 0;
+
     const productosConMargen = productos.map((producto) => {
       const precioCompra =
         producto.precioCompra !== null ? Number(producto.precioCompra) : null;
       const precioVenta =
         producto.precioVenta !== null ? Number(producto.precioVenta) : null;
+      const stockActual = toNumber(producto.stockActual);
       const tienePrecios = precioCompra !== null && precioVenta !== null;
       const margen = tienePrecios
         ? Number((precioVenta - precioCompra).toFixed(2))
@@ -1179,16 +1195,50 @@ class servicesReporte {
         tienePrecios && precioCompra > 0
           ? Number(((margen / precioCompra) * 100).toFixed(2))
           : null;
+      const valorCosto =
+        precioCompra !== null
+          ? Number((stockActual * precioCompra).toFixed(2))
+          : null;
+      const valorVenta =
+        precioVenta !== null
+          ? Number((stockActual * precioVenta).toFixed(2))
+          : null;
+      const utilidadPotencial =
+        valorCosto !== null && valorVenta !== null
+          ? Number((valorVenta - valorCosto).toFixed(2))
+          : null;
+
+      totalStockActual += stockActual;
+      totalValorCosto += valorCosto || 0;
+      totalValorVenta += valorVenta || 0;
+
       return {
-        ...producto,
+        id_producto: producto.id_producto,
+        nombre: producto.nombre,
+        codigo_barra: producto.codigo_barra,
+        forma_farmaceutica: producto.forma_farmaceutica,
+        concentracion: producto.concentracion,
         precioCompra,
         precioVenta,
         margen,
         margenPorcentaje,
+        stockActual,
+        valorCosto,
+        valorVenta,
+        utilidadPotencial,
       };
     });
 
-    return { productos: productosConMargen, generadoEl: new Date() };
+    return {
+      productos: productosConMargen,
+      generadoEl: new Date(),
+      totales: {
+        stockActual: totalStockActual,
+        valorCosto: Number(totalValorCosto.toFixed(2)),
+        valorVenta: Number(totalValorVenta.toFixed(2)),
+        utilidadPotencial: Number((totalValorVenta - totalValorCosto).toFixed(2)),
+      },
+    };
   }
 }
 
