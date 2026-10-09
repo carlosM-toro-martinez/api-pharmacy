@@ -334,16 +334,22 @@ class servicesReporte {
     return ventas.map(ventaConProductosActualizados);
   }
 
-  // Ventas agrupadas por trabajador, con el total de cada una (para el
-  // Excel de reportes/trabajadores). No incluye detallesVenta: a este
-  // reporte solo le importa el total por venta, que ya esta en Venta.total,
-  // asi que no hay necesidad de unir DetalleVenta (ni riesgo de que un
-  // include hasMany mal armado multiplique alguna fila).
+  // Ventas agrupadas por trabajador, con el detalle producto por producto
+  // (para el Excel de reportes/trabajadores). detallesVenta usa
+  // separate:true (una segunda consulta aparte, no un JOIN) para que no
+  // multiplique la fila de Venta por cada producto — el total de cada
+  // venta sigue saliendo de Venta.total (no de sumar las lineas), por la
+  // misma razon que ya se documento en auditarVentasDuplicadas: confiar en
+  // los montos ya cobrados es mas seguro que recalcularlos.
   async getVentasPorTrabajador(filters = {}) {
     const idSucursal = Number(filters.id_sucursal);
+    const idTrabajador = Number(filters.id_trabajador);
     const where = {};
     if (Number.isFinite(idSucursal) && idSucursal > 0) {
       where.id_sucursal = idSucursal;
+    }
+    if (Number.isFinite(idTrabajador) && idTrabajador > 0) {
+      where.id_trabajador = idTrabajador;
     }
     const rangoFechas = construirRangoFechas(filters.desde, filters.hasta);
     if (rangoFechas) where.fecha_venta = rangoFechas;
@@ -377,6 +383,19 @@ class servicesReporte {
           model: Sucursal,
           as: "sucursal",
           attributes: ["id_sucursal", "nombre"],
+        },
+        {
+          model: DetalleVenta,
+          as: "detallesVenta",
+          separate: true,
+          attributes: ["subCantidad", "precio_unitario"],
+          include: [
+            {
+              model: Producto,
+              as: "producto",
+              attributes: ["nombre"],
+            },
+          ],
         },
       ],
       order: [["id_trabajador", "ASC"], ["fecha_venta", "ASC"]],
@@ -420,6 +439,16 @@ class servicesReporte {
         sucursal: venta.sucursal?.nombre || "",
         metodo_pago: venta.metodo_pago,
         total,
+        productos: (venta.detallesVenta || []).map((detalle) => ({
+          nombre: detalle.producto?.nombre || "Producto",
+          precio_unitario: toNumber(detalle.precio_unitario),
+          cantidad: toNumber(detalle.subCantidad),
+          subtotal: Number(
+            (
+              toNumber(detalle.precio_unitario) * toNumber(detalle.subCantidad)
+            ).toFixed(2)
+          ),
+        })),
       });
       registro.totalVendido += total;
       granTotal += total;
