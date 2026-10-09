@@ -1133,6 +1133,41 @@ class servicesReporte {
       subCantidad: stockPorId.get(producto.id_producto)?.subCantidad || 0,
     }));
   }
+
+  async getReportePreciosProductos() {
+    const productos = await sequelize.query(
+      `
+        WITH ultimo_precio_venta AS (
+          SELECT DISTINCT ON (id_producto) id_producto, "precioVenta"
+          FROM "Lote"
+          WHERE "precioVenta" IS NOT NULL
+          ORDER BY id_producto, id_lote DESC
+        ),
+        ultimo_precio_compra AS (
+          SELECT DISTINCT ON (id_producto) id_producto, precio_unitario
+          FROM "DetalleCompra"
+          WHERE precio_unitario IS NOT NULL
+          ORDER BY id_producto, id_detalle DESC
+        )
+        SELECT
+          p."id_producto",
+          p."nombre",
+          p."codigo_barra",
+          p."forma_farmaceutica",
+          p."concentracion",
+          upc."precio_unitario" AS "precioCompra",
+          upv."precioVenta" AS "precioVenta"
+        FROM "Producto" p
+        LEFT JOIN ultimo_precio_compra upc ON upc."id_producto" = p."id_producto"
+        LEFT JOIN ultimo_precio_venta upv ON upv."id_producto" = p."id_producto"
+        WHERE COALESCE(p."activo", true) <> false
+        ORDER BY p."nombre" ASC
+      `,
+      { type: QueryTypes.SELECT }
+    );
+
+    return { productos, generadoEl: new Date() };
+  }
 }
 
 module.exports = servicesReporte;

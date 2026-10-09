@@ -177,6 +177,16 @@ route.get("/producto/:id_producto/historial", async (req, res) => {
   }
 });
 
+route.get("/precios-productos", async (req, res) => {
+  try {
+    const reporte = await reporteService.getReportePreciosProductos();
+    res.json(reporte);
+  } catch (error) {
+    console.error("Error fetching reporte de precios de productos:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 route.get("/mas-vendidos", async (req, res) => {
   try {
     const productos = await reporteService.obtenerProductosMasVendidos({
