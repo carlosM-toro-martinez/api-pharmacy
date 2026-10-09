@@ -1203,6 +1203,85 @@ class servicesAjustes {
     });
   }
 
+  async auditarUtilidadesProductos() {
+    const productos = await sequelize.query(
+      `
+        WITH ultimo_precio_venta AS (
+          SELECT DISTINCT ON (id_producto) id_producto, "precioVenta"
+          FROM "Lote"
+          WHERE "precioVenta" IS NOT NULL
+          ORDER BY id_producto, id_lote DESC
+        ),
+        ultimo_precio_compra AS (
+          SELECT DISTINCT ON (id_producto) id_producto, precio_unitario
+          FROM "DetalleCompra"
+          WHERE precio_unitario IS NOT NULL
+          ORDER BY id_producto, id_detalle DESC
+        )
+        SELECT
+          p."id_producto",
+          p."nombre",
+          p."codigo_barra",
+          p."forma_farmaceutica",
+          p."concentracion",
+          upc."precio_unitario" AS "precioCompra",
+          upv."precioVenta" AS "precioVenta"
+        FROM "Producto" p
+        LEFT JOIN ultimo_precio_compra upc ON upc."id_producto" = p."id_producto"
+        LEFT JOIN ultimo_precio_venta upv ON upv."id_producto" = p."id_producto"
+        WHERE COALESCE(p."activo", true) <> false
+      `,
+      { type: QueryTypes.SELECT }
+    );
+
+    const productosUtilidadNegativa = [];
+    const productosSinPrecio = [];
+
+    for (const producto of productos) {
+      const precioCompra =
+        producto.precioCompra !== null ? Number(producto.precioCompra) : null;
+      const precioVenta =
+        producto.precioVenta !== null ? Number(producto.precioVenta) : null;
+      const base = {
+        id_producto: producto.id_producto,
+        nombre: producto.nombre,
+        codigo_barra: producto.codigo_barra,
+        forma_farmaceutica: producto.forma_farmaceutica,
+        concentracion: producto.concentracion,
+        precioCompra,
+        precioVenta,
+      };
+
+      if (precioCompra === null || precioVenta === null) {
+        const motivo =
+          precioCompra === null && precioVenta === null
+            ? "Sin precio de compra ni de venta"
+            : precioCompra === null
+            ? "Sin precio de compra"
+            : "Sin precio de venta";
+        productosSinPrecio.push({ ...base, motivo });
+        continue;
+      }
+
+      const margen = round2(precioVenta - precioCompra);
+      const margenPorcentaje =
+        precioCompra > 0 ? round2((margen / precioCompra) * 100) : null;
+
+      if (margen < 0) {
+        productosUtilidadNegativa.push({ ...base, margen, margenPorcentaje });
+      }
+    }
+
+    productosUtilidadNegativa.sort((a, b) => a.margen - b.margen);
+
+    return {
+      totalProductosUtilidadNegativa: productosUtilidadNegativa.length,
+      totalProductosSinPrecio: productosSinPrecio.length,
+      productosUtilidadNegativa,
+      productosSinPrecio,
+    };
+  }
+
   async resumenAuditoria() {
     // La comparacion Producto vs Inventario (auditarStock) queda fuera de
     // este resumen automatico: desde que Stock Inicial y Transferencias

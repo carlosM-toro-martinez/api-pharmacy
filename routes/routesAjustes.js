@@ -127,6 +127,16 @@ route.get("/movimientos-duplicados", async (req, res) => {
   }
 });
 
+route.get("/utilidades-productos", async (req, res) => {
+  try {
+    const resultado = await ajustesService.auditarUtilidadesProductos();
+    res.json(resultado);
+  } catch (error) {
+    console.error("Error auditando utilidades de productos:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 route.post("/sincronizar-stock", async (req, res) => {
   try {
     const resultado = await ajustesService.sincronizarTodosLosStocks();

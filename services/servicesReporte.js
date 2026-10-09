@@ -1166,7 +1166,29 @@ class servicesReporte {
       { type: QueryTypes.SELECT }
     );
 
-    return { productos, generadoEl: new Date() };
+    const productosConMargen = productos.map((producto) => {
+      const precioCompra =
+        producto.precioCompra !== null ? Number(producto.precioCompra) : null;
+      const precioVenta =
+        producto.precioVenta !== null ? Number(producto.precioVenta) : null;
+      const tienePrecios = precioCompra !== null && precioVenta !== null;
+      const margen = tienePrecios
+        ? Number((precioVenta - precioCompra).toFixed(2))
+        : null;
+      const margenPorcentaje =
+        tienePrecios && precioCompra > 0
+          ? Number(((margen / precioCompra) * 100).toFixed(2))
+          : null;
+      return {
+        ...producto,
+        precioCompra,
+        precioVenta,
+        margen,
+        margenPorcentaje,
+      };
+    });
+
+    return { productos: productosConMargen, generadoEl: new Date() };
   }
 }
 
