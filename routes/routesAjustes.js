@@ -76,7 +76,7 @@ route.get("/lotes-sobrevendidos", async (req, res) => {
 
 route.get("/ventas-duplicadas", async (req, res) => {
   try {
-    const duplicadas = await ajustesService.auditarVentasDuplicadas();
+    const duplicadas = await ajustesService.auditarVentasDuplicadas(req.query);
     res.json(duplicadas);
   } catch (error) {
     console.error("Error auditando ventas duplicadas:", error);

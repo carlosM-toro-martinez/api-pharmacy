@@ -781,7 +781,10 @@ class servicesAjustes {
   // duplicadas, 211 siguen con un faltante real (algunos mayor al que
   // explica solo la duplicacion, por tener otro problema encima) y 8 ya no
   // tienen faltante pendiente — esos se excluyen de la lista.
-  async auditarVentasDuplicadas() {
+  async auditarVentasDuplicadas(filters = {}) {
+    const anio = Number(filters.anio);
+    const filtrarPorAnio = Number.isFinite(anio) && anio > 0;
+
     const filas = await sequelize.query(
       `
         WITH ventas_unicas AS (
@@ -848,20 +851,51 @@ class servicesAjustes {
           GROUP BY "id_venta", "id_producto", "id_lote", "cantidad", "subCantidad", "precio_unitario"
           HAVING COUNT(*) > 1
         ),
-        resumenDuplicados AS (
-          SELECT p."id_producto", p."nombre", p."codigo_barra",
-            s."id_sucursal", s."nombre" AS "sucursal",
-            SUM((d."repeticiones" - 1) * d."subCantidad")::int AS "unidadesDescontadasDeMas",
-            COUNT(*)::int AS "cantidadVentasAfectadas",
-            MAX(v."fecha_venta") AS "fechaMasReciente"
+        -- El filtro de anio (si se pide) acota CUALES incidentes de
+        -- duplicado se listan, pero el faltante real (stockReal vs
+        -- stockEsperadoSinDuplicado abajo) siempre se calcula con el
+        -- historial COMPLETO: el stock actual no "sabe" de que anio es el
+        -- hueco, asi que filtrar esa parte por anio daria un numero falso.
+        duplicadosFiltrados AS (
+          SELECT d.*, v."fecha_venta", v."id_sucursal"
           FROM duplicados d
-          JOIN "Producto" p ON p."id_producto" = d."id_producto"
           JOIN "Venta" v ON v."id_venta" = d."id_venta"
-          JOIN "Sucursal" s ON s."id_sucursal" = v."id_sucursal"
-          GROUP BY p."id_producto", p."nombre", p."codigo_barra", s."id_sucursal", s."nombre"
+          ${filtrarPorAnio ? `WHERE EXTRACT(YEAR FROM v."fecha_venta") = :anio` : ""}
+        ),
+        resumenDuplicados AS (
+          SELECT df."id_producto", p."nombre", p."codigo_barra",
+            p."forma_farmaceutica", p."concentracion",
+            df."id_sucursal", s."nombre" AS "sucursal",
+            SUM((df."repeticiones" - 1) * df."subCantidad")::int AS "unidadesDescontadasDeMas",
+            COUNT(*)::int AS "cantidadVentasAfectadas",
+            MAX(df."fecha_venta") AS "fechaMasReciente"
+          FROM duplicadosFiltrados df
+          JOIN "Producto" p ON p."id_producto" = df."id_producto"
+          JOIN "Sucursal" s ON s."id_sucursal" = df."id_sucursal"
+          GROUP BY df."id_producto", p."nombre", p."codigo_barra", p."forma_farmaceutica",
+            p."concentracion", df."id_sucursal", s."nombre"
+        ),
+        -- Lote de la duplicacion mas reciente de cada producto+sucursal, para
+        -- mostrar a que proveedor correspondia (un producto puede tener
+        -- lotes de varios proveedores distintos, asi que no hay un
+        -- "proveedor del producto" unico — se muestra el del caso mas
+        -- reciente, el mismo que ya se usa para "fechaMasReciente").
+        loteMasReciente AS (
+          SELECT DISTINCT ON (df."id_producto", df."id_sucursal")
+            df."id_producto", df."id_sucursal", df."id_lote"
+          FROM duplicadosFiltrados df
+          ORDER BY df."id_producto", df."id_sucursal", df."fecha_venta" DESC
+        ),
+        proveedorMasReciente AS (
+          SELECT lmr."id_producto", lmr."id_sucursal", pr."nombre" AS "proveedor"
+          FROM loteMasReciente lmr
+          LEFT JOIN "Lote" l ON l."id_lote" = lmr."id_lote"
+          LEFT JOIN "DetalleCompra" dc ON dc."id_detalle" = l."id_detalle_compra"
+          LEFT JOIN "Proveedor" pr ON pr."id_proveedor" = dc."id_proveedor"
         )
         SELECT
           rd.*,
+          pmr."proveedor",
           COALESCE(ir."stockReal", 0) AS "stockReal",
           (
             COALESCE(c."totalCompras", 0)
@@ -872,6 +906,7 @@ class servicesAjustes {
             - COALESCE(ts."totalTransferenciaSalida", 0)
           ) AS "stockEsperadoSinDuplicado"
         FROM resumenDuplicados rd
+        LEFT JOIN proveedorMasReciente pmr ON pmr."id_producto" = rd."id_producto" AND pmr."id_sucursal" = rd."id_sucursal"
         LEFT JOIN inventario_real ir ON ir."id_producto" = rd."id_producto" AND ir."id_sucursal" = rd."id_sucursal"
         LEFT JOIN compras c ON c."id_producto" = rd."id_producto" AND c."id_sucursal" = rd."id_sucursal"
         LEFT JOIN ventasPorProductoSucursal v ON v."id_producto" = rd."id_producto" AND v."id_sucursal" = rd."id_sucursal"
@@ -880,7 +915,10 @@ class servicesAjustes {
         LEFT JOIN saldoInicial si ON si."id_producto" = rd."id_producto" AND si."id_sucursal" = rd."id_sucursal"
         LEFT JOIN loteFantasma lf ON lf."id_producto" = rd."id_producto" AND lf."id_sucursal" = rd."id_sucursal"
       `,
-      { type: QueryTypes.SELECT }
+      {
+        type: QueryTypes.SELECT,
+        replacements: filtrarPorAnio ? { anio } : {},
+      }
     );
 
     const productos = filas
@@ -898,6 +936,9 @@ class servicesAjustes {
           id_producto: fila.id_producto,
           nombre: fila.nombre,
           codigo_barra: fila.codigo_barra,
+          forma_farmaceutica: fila.forma_farmaceutica,
+          concentracion: fila.concentracion,
+          proveedor: fila.proveedor,
           id_sucursal: fila.id_sucursal,
           sucursal: fila.sucursal,
           unidadesDescontadasDeMas: toNumber(fila.unidadesDescontadasDeMas),
@@ -911,12 +952,32 @@ class servicesAjustes {
       .filter((p) => p.faltanteReal > 0.01)
       .sort((a, b) => b.faltanteReal - a.faltanteReal);
 
+    // Lista de años con al menos un incidente de venta duplicada, para
+    // armar el filtro del frontend. Siempre sale del historial completo
+    // (no del filtro actual), para que el dropdown no se achique solo.
+    const aniosFilas = await sequelize.query(
+      `
+        SELECT DISTINCT EXTRACT(YEAR FROM v."fecha_venta")::int AS "anio"
+        FROM "DetalleVenta" dv
+        JOIN "Venta" v ON v."id_venta" = dv."id_venta"
+        WHERE (dv."id_venta", dv."id_producto", dv."id_lote", dv."cantidad", dv."subCantidad", dv."precio_unitario") IN (
+          SELECT "id_venta", "id_producto", "id_lote", "cantidad", "subCantidad", "precio_unitario"
+          FROM "DetalleVenta"
+          GROUP BY "id_venta", "id_producto", "id_lote", "cantidad", "subCantidad", "precio_unitario"
+          HAVING COUNT(*) > 1
+        )
+        ORDER BY "anio" DESC
+      `,
+      { type: QueryTypes.SELECT }
+    );
+
     return {
       totalProductosAfectados: productos.length,
       totalUnidadesDescontadasDeMas: productos.reduce(
         (total, p) => total + p.faltanteReal,
         0
       ),
+      aniosDisponibles: aniosFilas.map((f) => f.anio),
       productos,
     };
   }
