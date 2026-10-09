@@ -757,6 +757,71 @@ class servicesAjustes {
     };
   }
 
+  // Lista, por producto+sucursal, cuanto stock se desconto de mas por
+  // ventas con una linea de DetalleVenta duplicada (mismo producto+lote
+  // repetido en una sola venta: se creaba la fila dos veces y el
+  // inventario se restaba dos veces, aunque el cliente pago una sola vez).
+  // Esto es CONFIRMADO, no una sospecha: son filas identicas de verdad en
+  // la base, asi que "unidadesDescontadasDeMas" es exacto. Se agrega al
+  // stock real para sugerir cual seria el stock corregido, a modo de
+  // referencia para el conteo fisico — no se corrige nada automaticamente.
+  async auditarVentasDuplicadas() {
+    const filas = await sequelize.query(
+      `
+        WITH duplicados AS (
+          SELECT "id_venta", "id_producto", "id_lote", "cantidad", "subCantidad", "precio_unitario",
+            COUNT(*) AS "repeticiones"
+          FROM "DetalleVenta"
+          GROUP BY "id_venta", "id_producto", "id_lote", "cantidad", "subCantidad", "precio_unitario"
+          HAVING COUNT(*) > 1
+        ),
+        inventario_real AS (
+          SELECT "id_producto", "id_sucursal", SUM(COALESCE("subCantidad", 0)) AS "stockReal"
+          FROM "Inventario"
+          GROUP BY "id_producto", "id_sucursal"
+        )
+        SELECT
+          p."id_producto", p."nombre", p."codigo_barra",
+          s."id_sucursal", s."nombre" AS "sucursal",
+          SUM((d."repeticiones" - 1) * d."subCantidad")::int AS "unidadesDescontadasDeMas",
+          COUNT(*)::int AS "cantidadVentasAfectadas",
+          MAX(v."fecha_venta") AS "fechaMasReciente",
+          COALESCE(ir."stockReal", 0) AS "stockReal"
+        FROM duplicados d
+        JOIN "Producto" p ON p."id_producto" = d."id_producto"
+        JOIN "Venta" v ON v."id_venta" = d."id_venta"
+        JOIN "Sucursal" s ON s."id_sucursal" = v."id_sucursal"
+        LEFT JOIN inventario_real ir
+          ON ir."id_producto" = d."id_producto" AND ir."id_sucursal" = v."id_sucursal"
+        GROUP BY p."id_producto", p."nombre", p."codigo_barra", s."id_sucursal", s."nombre", ir."stockReal"
+        ORDER BY "unidadesDescontadasDeMas" DESC
+      `,
+      { type: QueryTypes.SELECT }
+    );
+
+    const productos = filas.map((fila) => ({
+      id_producto: fila.id_producto,
+      nombre: fila.nombre,
+      codigo_barra: fila.codigo_barra,
+      id_sucursal: fila.id_sucursal,
+      sucursal: fila.sucursal,
+      unidadesDescontadasDeMas: toNumber(fila.unidadesDescontadasDeMas),
+      cantidadVentasAfectadas: toNumber(fila.cantidadVentasAfectadas),
+      fechaMasReciente: fila.fechaMasReciente,
+      stockReal: toNumber(fila.stockReal),
+      stockSugerido: toNumber(fila.stockReal) + toNumber(fila.unidadesDescontadasDeMas),
+    }));
+
+    return {
+      totalProductosAfectados: productos.length,
+      totalUnidadesDescontadasDeMas: productos.reduce(
+        (total, p) => total + p.unidadesDescontadasDeMas,
+        0
+      ),
+      productos,
+    };
+  }
+
   async resumenAuditoria() {
     // La comparacion Producto vs Inventario (auditarStock) queda fuera de
     // este resumen automatico: desde que Stock Inicial y Transferencias

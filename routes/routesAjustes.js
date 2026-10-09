@@ -74,6 +74,16 @@ route.get("/lotes-sobrevendidos", async (req, res) => {
   }
 });
 
+route.get("/ventas-duplicadas", async (req, res) => {
+  try {
+    const duplicadas = await ajustesService.auditarVentasDuplicadas();
+    res.json(duplicadas);
+  } catch (error) {
+    console.error("Error auditando ventas duplicadas:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 route.get("/inventarios-negativos", async (req, res) => {
   try {
     const negativos = await ajustesService.auditarInventariosNegativos();
