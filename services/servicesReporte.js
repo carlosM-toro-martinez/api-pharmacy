@@ -287,6 +287,110 @@ class servicesReporte {
     return ventas.map(ventaConProductosActualizados);
   }
 
+  // Ventas agrupadas por trabajador, con el total de cada una (para el
+  // Excel de reportes/trabajadores). No incluye detallesVenta: a este
+  // reporte solo le importa el total por venta, que ya esta en Venta.total,
+  // asi que no hay necesidad de unir DetalleVenta (ni riesgo de que un
+  // include hasMany mal armado multiplique alguna fila).
+  async getVentasPorTrabajador(filters = {}) {
+    const idSucursal = Number(filters.id_sucursal);
+    const where = {};
+    if (Number.isFinite(idSucursal) && idSucursal > 0) {
+      where.id_sucursal = idSucursal;
+    }
+    const rangoFechas = construirRangoFechas(filters.desde, filters.hasta);
+    if (rangoFechas) where.fecha_venta = rangoFechas;
+
+    const ventas = await Venta.findAll({
+      where,
+      attributes: [
+        "id_venta",
+        "fecha_venta",
+        "total",
+        "metodo_pago",
+        "id_trabajador",
+      ],
+      include: [
+        {
+          model: Trabajador,
+          as: "trabajadorVenta",
+          attributes: [
+            "id_trabajador",
+            "nombre",
+            "apellido_paterno",
+            "apellido_materno",
+          ],
+        },
+        {
+          model: Cliente,
+          as: "cliente",
+          attributes: ["nombre", "apellido"],
+        },
+        {
+          model: Sucursal,
+          as: "sucursal",
+          attributes: ["id_sucursal", "nombre"],
+        },
+      ],
+      order: [["id_trabajador", "ASC"], ["fecha_venta", "ASC"]],
+    });
+
+    const porTrabajador = new Map();
+    let granTotal = 0;
+
+    for (const venta of ventas) {
+      const trabajador = venta.trabajadorVenta;
+      const key = venta.id_trabajador ?? "sin-trabajador";
+      const nombre = trabajador
+        ? [
+            trabajador.nombre,
+            trabajador.apellido_paterno,
+            trabajador.apellido_materno,
+          ]
+            .filter(Boolean)
+            .join(" ")
+        : "Sin trabajador asignado";
+
+      if (!porTrabajador.has(key)) {
+        porTrabajador.set(key, {
+          id_trabajador: trabajador?.id_trabajador ?? null,
+          nombre,
+          ventas: [],
+          totalVendido: 0,
+        });
+      }
+
+      const total = toNumber(venta.total);
+      const registro = porTrabajador.get(key);
+      registro.ventas.push({
+        id_venta: venta.id_venta,
+        fecha_venta: venta.fecha_venta,
+        cliente: venta.cliente
+          ? [venta.cliente.nombre, venta.cliente.apellido]
+              .filter(Boolean)
+              .join(" ")
+          : "Cliente",
+        sucursal: venta.sucursal?.nombre || "",
+        metodo_pago: venta.metodo_pago,
+        total,
+      });
+      registro.totalVendido += total;
+      granTotal += total;
+    }
+
+    const trabajadores = Array.from(porTrabajador.values())
+      .map((t) => ({ ...t, totalVendido: Number(t.totalVendido.toFixed(2)) }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+
+    return {
+      desde: filters.desde || null,
+      hasta: filters.hasta || null,
+      cantidadVentasTotal: ventas.length,
+      granTotal: Number(granTotal.toFixed(2)),
+      trabajadores,
+    };
+  }
+
   async getLotesConDetalleCompra(idInicio, idFin) {
     console.log(idInicio, idFin);
 

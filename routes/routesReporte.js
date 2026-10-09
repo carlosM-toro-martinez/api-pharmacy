@@ -50,6 +50,16 @@ route.get("/ventas-reporte", async (req, res) => {
   }
 });
 
+route.get("/ventas-por-trabajador", async (req, res) => {
+  try {
+    const reporte = await reporteService.getVentasPorTrabajador(req.query);
+    res.json(reporte);
+  } catch (error) {
+    console.error("Error fetching reporte de ventas por trabajador:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 route.get("/almacenes/compras/:proveedorId", async (req, res) => {
   const { proveedorId } = req.params;
   try {
