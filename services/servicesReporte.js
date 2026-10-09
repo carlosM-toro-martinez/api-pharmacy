@@ -1135,6 +1135,11 @@ class servicesReporte {
   }
 
   async getReportePreciosProductos() {
+    // INNER JOIN con ambas CTEs a proposito: un producto sin precio de
+    // compra o sin precio de venta no entra a este reporte (no se puede
+    // calcular el "versus" ni la utilidad potencial). Esos casos ya se
+    // revisan aparte en Ajustes -> "Utilidades negativas y precios
+    // faltantes".
     const productos = await sequelize.query(
       `
         WITH ultimo_precio_venta AS (
@@ -1148,14 +1153,6 @@ class servicesReporte {
           FROM "DetalleCompra"
           WHERE precio_unitario IS NOT NULL
           ORDER BY id_producto, id_detalle DESC
-        ),
-        stock_actual AS (
-          SELECT
-            "id_producto",
-            SUM("cantidad")::int AS "cantidad",
-            SUM("subCantidad")::int AS "subCantidad"
-          FROM "Inventario"
-          GROUP BY "id_producto"
         )
         SELECT
           p."id_producto",
@@ -1164,53 +1161,53 @@ class servicesReporte {
           p."forma_farmaceutica",
           p."concentracion",
           upc."precio_unitario" AS "precioCompra",
-          upv."precioVenta" AS "precioVenta",
-          COALESCE(sa."cantidad", 0) AS "stockCantidad",
-          COALESCE(sa."subCantidad", 0) AS "stockActual"
+          upv."precioVenta" AS "precioVenta"
         FROM "Producto" p
-        LEFT JOIN ultimo_precio_compra upc ON upc."id_producto" = p."id_producto"
-        LEFT JOIN ultimo_precio_venta upv ON upv."id_producto" = p."id_producto"
-        LEFT JOIN stock_actual sa ON sa."id_producto" = p."id_producto"
+        INNER JOIN ultimo_precio_compra upc ON upc."id_producto" = p."id_producto"
+        INNER JOIN ultimo_precio_venta upv ON upv."id_producto" = p."id_producto"
         WHERE COALESCE(p."activo", true) <> false
         ORDER BY p."nombre" ASC
       `,
       { type: QueryTypes.SELECT }
     );
 
-    let totalStockActual = 0;
-    let totalValorCosto = 0;
-    let totalValorVenta = 0;
+    const stockPorProductoYSucursal = await sequelize.query(
+      `
+        SELECT
+          "id_producto",
+          "id_sucursal",
+          SUM("subCantidad")::int AS "subCantidad"
+        FROM "Inventario"
+        GROUP BY "id_producto", "id_sucursal"
+      `,
+      { type: QueryTypes.SELECT }
+    );
 
-    const productosConMargen = productos.map((producto) => {
-      const precioCompra =
-        producto.precioCompra !== null ? Number(producto.precioCompra) : null;
-      const precioVenta =
-        producto.precioVenta !== null ? Number(producto.precioVenta) : null;
-      const stockActual = toNumber(producto.stockActual);
-      const tienePrecios = precioCompra !== null && precioVenta !== null;
-      const margen = tienePrecios
-        ? Number((precioVenta - precioCompra).toFixed(2))
-        : null;
+    const stockPorSucursalPorProducto = new Map();
+    const stockTotalPorProducto = new Map();
+    for (const fila of stockPorProductoYSucursal) {
+      const cantidad = toNumber(fila.subCantidad);
+      stockTotalPorProducto.set(
+        fila.id_producto,
+        toNumber(stockTotalPorProducto.get(fila.id_producto)) + cantidad
+      );
+      if (!stockPorSucursalPorProducto.has(fila.id_sucursal)) {
+        stockPorSucursalPorProducto.set(fila.id_sucursal, new Map());
+      }
+      stockPorSucursalPorProducto.get(fila.id_sucursal).set(fila.id_producto, cantidad);
+    }
+
+    const sucursales = await sucursalService.getAllSucursales();
+
+    const construirFila = (producto, stockActual) => {
+      const precioCompra = Number(producto.precioCompra);
+      const precioVenta = Number(producto.precioVenta);
+      const margen = Number((precioVenta - precioCompra).toFixed(2));
       const margenPorcentaje =
-        tienePrecios && precioCompra > 0
-          ? Number(((margen / precioCompra) * 100).toFixed(2))
-          : null;
-      const valorCosto =
-        precioCompra !== null
-          ? Number((stockActual * precioCompra).toFixed(2))
-          : null;
-      const valorVenta =
-        precioVenta !== null
-          ? Number((stockActual * precioVenta).toFixed(2))
-          : null;
-      const utilidadPotencial =
-        valorCosto !== null && valorVenta !== null
-          ? Number((valorVenta - valorCosto).toFixed(2))
-          : null;
-
-      totalStockActual += stockActual;
-      totalValorCosto += valorCosto || 0;
-      totalValorVenta += valorVenta || 0;
+        precioCompra > 0 ? Number(((margen / precioCompra) * 100).toFixed(2)) : null;
+      const valorCosto = Number((stockActual * precioCompra).toFixed(2));
+      const valorVenta = Number((stockActual * precioVenta).toFixed(2));
+      const utilidadPotencial = Number((valorVenta - valorCosto).toFixed(2));
 
       return {
         id_producto: producto.id_producto,
@@ -1227,17 +1224,56 @@ class servicesReporte {
         valorVenta,
         utilidadPotencial,
       };
+    };
+
+    const calcularTotales = (filas) =>
+      filas.reduce(
+        (totales, fila) => ({
+          stockActual: totales.stockActual + fila.stockActual,
+          valorCosto: Number((totales.valorCosto + fila.valorCosto).toFixed(2)),
+          valorVenta: Number((totales.valorVenta + fila.valorVenta).toFixed(2)),
+        }),
+        { stockActual: 0, valorCosto: 0, valorVenta: 0 }
+      );
+
+    const productosConMargen = productos.map((producto) =>
+      construirFila(producto, toNumber(stockTotalPorProducto.get(producto.id_producto)))
+    );
+    const totalesGenerales = calcularTotales(productosConMargen);
+
+    const reportesPorSucursal = sucursales.map((sucursal) => {
+      const stockDeEstaSucursal = stockPorSucursalPorProducto.get(sucursal.id_sucursal) || new Map();
+      const productosDeEstaSucursal = productos.map((producto) =>
+        construirFila(producto, toNumber(stockDeEstaSucursal.get(producto.id_producto)))
+      );
+      return {
+        id_sucursal: sucursal.id_sucursal,
+        nombre: sucursal.nombre,
+        productos: productosDeEstaSucursal,
+        totales: calcularTotales(productosDeEstaSucursal),
+      };
     });
 
     return {
       productos: productosConMargen,
-      generadoEl: new Date(),
       totales: {
-        stockActual: totalStockActual,
-        valorCosto: Number(totalValorCosto.toFixed(2)),
-        valorVenta: Number(totalValorVenta.toFixed(2)),
-        utilidadPotencial: Number((totalValorVenta - totalValorCosto).toFixed(2)),
+        stockActual: totalesGenerales.stockActual,
+        valorCosto: totalesGenerales.valorCosto,
+        valorVenta: totalesGenerales.valorVenta,
+        utilidadPotencial: Number(
+          (totalesGenerales.valorVenta - totalesGenerales.valorCosto).toFixed(2)
+        ),
       },
+      sucursales: reportesPorSucursal.map((reporte) => ({
+        ...reporte,
+        totales: {
+          ...reporte.totales,
+          utilidadPotencial: Number(
+            (reporte.totales.valorVenta - reporte.totales.valorCosto).toFixed(2)
+          ),
+        },
+      })),
+      generadoEl: new Date(),
     };
   }
 }
