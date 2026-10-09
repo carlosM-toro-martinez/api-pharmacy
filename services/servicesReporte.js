@@ -237,13 +237,27 @@ class servicesReporte {
     if (rangoFechas) where.fecha_venta = rangoFechas;
 
     // Buscar por producto: se resuelve primero a que ventas tienen una
-    // linea de ese producto (nombre o codigo de barra), y recien ahi se
-    // filtra la consulta principal por esos id_venta. No se puede filtrar
-    // directo sobre "detallesVenta" porque ese include usa separate:true
-    // (una segunda consulta, para no multiplicar la fila de Venta por
-    // cada producto) — un where ahi no afectaria la consulta principal.
+    // linea de ese producto, y recien ahi se filtra la consulta principal
+    // por esos id_venta. No se puede filtrar directo sobre "detallesVenta"
+    // porque ese include usa separate:true (una segunda consulta, para no
+    // multiplicar la fila de Venta por cada producto) — un where ahi no
+    // afectaria la consulta principal.
+    //
+    // id_producto (exacto, viene del mismo autocomplete que se usa para
+    // vender) tiene prioridad sobre "producto" (texto libre, nombre o
+    // codigo de barra) si llegan ambos.
+    const idProductoFiltro = Number(filters.id_producto);
     const busquedaProducto = String(filters.producto || "").trim();
-    if (busquedaProducto) {
+    if (Number.isFinite(idProductoFiltro) && idProductoFiltro > 0) {
+      const ventasConProducto = await DetalleVenta.findAll({
+        attributes: ["id_venta"],
+        where: { id_producto: idProductoFiltro },
+        raw: true,
+      });
+      const idsVenta = [...new Set(ventasConProducto.map((v) => v.id_venta))];
+      if (!idsVenta.length) return [];
+      where.id_venta = { [Op.in]: idsVenta };
+    } else if (busquedaProducto) {
       const ventasConProducto = await DetalleVenta.findAll({
         attributes: ["id_venta"],
         include: [
