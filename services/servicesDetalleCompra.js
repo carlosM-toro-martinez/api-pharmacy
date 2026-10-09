@@ -200,7 +200,7 @@ class servicesDetalleCompra {
       const productoModificaciones = {};
       const productosAfectados = new Set([id_producto]);
 
-      try {
+      {
         // Eliminar inventario
         const inventario = await Inventario.findByPk(id_inventario, {
           transaction,
@@ -272,26 +272,24 @@ class servicesDetalleCompra {
           productoModificaciones[id_producto].subCantidad -= subCantidad || 0;
           productoModificaciones[id_producto].peso -= parseFloat(peso) || 0;
         }
-      } catch (error) {
-        console.error(`Error al procesar el detalle: ${error.message}`);
       }
 
-      // Guardar actualizaciones del producto
+      // Guardar actualizaciones del producto. Antes, un error aca (o en
+      // cualquiera de los pasos de arriba) se registraba en el log y se
+      // IGNORABA, dejando que la transaccion igual hiciera commit — podia
+      // reportar "eliminado exitosamente" habiendo borrado solo parte de
+      // los registros (ej. el Inventario pero no el Lote), o sin aplicar
+      // el ajuste al stock del producto. Ahora un error aca revienta hacia
+      // el catch de afuera, que hace rollback de todo.
       for (const mod of Object.values(productoModificaciones)) {
-        try {
-          await mod.producto.update(
-            {
-              stock: mod.stock,
-              subCantidad: mod.subCantidad,
-              peso: mod.peso,
-            },
-            { transaction }
-          );
-        } catch (error) {
-          console.error(
-            `Error al actualizar el producto con ID ${mod.producto.id}: ${error.message}`
-          );
-        }
+        await mod.producto.update(
+          {
+            stock: mod.stock,
+            subCantidad: mod.subCantidad,
+            peso: mod.peso,
+          },
+          { transaction }
+        );
       }
 
       for (const idProducto of productosAfectados) {

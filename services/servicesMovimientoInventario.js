@@ -176,8 +176,13 @@ class servicesMovimientoInventario {
 
   async createMovimientoInventario(data, transaction = null) {
     try {
-      const idSucursal =
-        data?.id_sucursal || (await obtenerIdSucursalPrincipal(transaction));
+      let idSucursal = data?.id_sucursal;
+      if (!idSucursal) {
+        idSucursal = await obtenerIdSucursalPrincipal(transaction);
+        console.error(
+          `Creando MovimientoInventario sin id_sucursal (producto ${data?.id_producto}): se asumio la sucursal principal (${idSucursal}).`
+        );
+      }
       const newMovimiento = await MovimientoInventario.create(
         { ...data, id_sucursal: idSucursal },
         {

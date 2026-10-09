@@ -346,8 +346,13 @@ class servicesInventario {
 
   async createInventario(data, transaction = null) {
     try {
-      const idSucursal =
-        data?.id_sucursal || (await obtenerIdSucursalPrincipal(transaction));
+      let idSucursal = data?.id_sucursal;
+      if (!idSucursal) {
+        idSucursal = await obtenerIdSucursalPrincipal(transaction);
+        console.error(
+          `Creando Inventario sin id_sucursal (producto ${data?.id_producto}): se asumio la sucursal principal (${idSucursal}). Revisar de donde viene esta compra/carga.`
+        );
+      }
       const newInventario = await Inventario.create(
         { ...data, id_sucursal: idSucursal },
         { transaction }

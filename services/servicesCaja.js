@@ -17,6 +17,9 @@ class servicesCaja {
     const sucursalPrincipal = await sucursalService.obtenerSucursalPrincipal(
       transaction
     );
+    console.error(
+      `Operacion de caja sin id_sucursal: se asumio la sucursal principal (${sucursalPrincipal.id_sucursal}).`
+    );
     return sucursalPrincipal.id_sucursal;
   }
 
@@ -68,7 +71,10 @@ class servicesCaja {
         id_sucursal,
         t
       );
-      const caja = await Caja.findByPk(id_caja);
+      const caja = await Caja.findByPk(id_caja, {
+        transaction: t,
+        lock: true,
+      });
       if (!caja) {
         throw new Error(`Caja with ID ${id_caja} not found`);
       }

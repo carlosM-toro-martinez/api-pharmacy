@@ -20,6 +20,16 @@ const toNumber = (value) => {
   return Number.isFinite(number) ? number : 0;
 };
 
+// Mismo patron de servicesVenta.js: el boton de transferir/cargar stock
+// solo se deshabilita DESPUES de que la mutacion empieza (hay un hueco
+// async entre el clic y eso), asi que un doble clic o un reintento de red
+// podian mandar la misma transferencia dos veces.
+const operacionesEnProceso = new Set();
+const operacionesProcesadas = new Map();
+const VENTANA_DEDUP_MS = 5000;
+
+const buildOperacionKey = (tipo, data) => JSON.stringify({ tipo, data });
+
 class servicesSucursal {
   async obtenerSucursalPrincipal(transaction = null) {
     const marcadaPrincipal = await Sucursal.findOne({
@@ -273,7 +283,12 @@ class servicesSucursal {
     return { message: `Sucursal "${sucursal.nombre}" eliminada correctamente.` };
   }
 
-  async transferirInventario(data) {
+  // transaccionExterna: si se pasa (desde transferirInventarios, para que
+  // una transferencia de varios productos sea atomica), se usa esa misma
+  // transaccion en vez de abrir una propia, asi que un error en el
+  // producto 2 revierte tambien lo que ya se habia hecho para el
+  // producto 1 en esa misma llamada.
+  async transferirInventario(data, transaccionExterna = null) {
     const idProducto = Number(data?.id_producto);
     const idSucursalOrigen = Number(data?.id_sucursal_origen);
     const idSucursalDestino = Number(data?.id_sucursal_destino);
@@ -312,7 +327,7 @@ class servicesSucursal {
       throw new Error("La cantidad de unidades a transferir debe ser mayor a cero.");
     }
 
-    return await sequelize.transaction(async (transaction) => {
+    const ejecutarTransferencia = async (transaction) => {
       const [producto, sucursalOrigen, sucursalDestino] =
         await Promise.all([
           Producto.findByPk(idProducto, { transaction }),
@@ -522,9 +537,38 @@ class servicesSucursal {
           unidades: subCantidad,
         },
       };
-    });
+    };
+
+    if (transaccionExterna) {
+      return await ejecutarTransferencia(transaccionExterna);
+    }
+
+    const operacionKey = buildOperacionKey("transferencia-simple", data);
+    if (operacionesEnProceso.has(operacionKey)) {
+      throw new Error("Esta transferencia ya se esta procesando. Espere un momento.");
+    }
+    if (operacionesProcesadas.has(operacionKey)) {
+      console.error(
+        `Transferencia duplicada detectada (misma transferencia repetida dentro de ${VENTANA_DEDUP_MS}ms): se devuelve el resultado anterior sin repetirla.`
+      );
+      return operacionesProcesadas.get(operacionKey);
+    }
+    operacionesEnProceso.add(operacionKey);
+    try {
+      const resultado = await sequelize.transaction(ejecutarTransferencia);
+      operacionesProcesadas.set(operacionKey, resultado);
+      setTimeout(() => operacionesProcesadas.delete(operacionKey), VENTANA_DEDUP_MS);
+      return resultado;
+    } finally {
+      operacionesEnProceso.delete(operacionKey);
+    }
   }
 
+  // Una transferencia de varios productos se hace en UNA sola transaccion:
+  // antes cada producto abria la suya propia, asi que si el producto 2 de
+  // 3 fallaba (ej. stock insuficiente), el 1 ya habia quedado movido y el
+  // 3 nunca se intentaba — una transferencia "a medias" sin que el usuario
+  // se diera cuenta mas que por el mensaje de error.
   async transferirInventarios(data) {
     const items = Array.isArray(data?.items) ? data.items : [];
 
@@ -532,22 +576,45 @@ class servicesSucursal {
       throw new Error("Debe agregar al menos un producto a la transferencia.");
     }
 
-    const resultados = [];
-    for (const item of items) {
-      resultados.push(
-        await this.transferirInventario({
-          ...item,
-          id_sucursal_origen: data.id_sucursal_origen,
-          id_sucursal_destino: data.id_sucursal_destino,
-          id_trabajador: data.id_trabajador,
-        })
-      );
+    const operacionKey = buildOperacionKey("transferencia-multiple", data);
+    if (operacionesEnProceso.has(operacionKey)) {
+      throw new Error("Esta transferencia ya se esta procesando. Espere un momento.");
     }
+    if (operacionesProcesadas.has(operacionKey)) {
+      console.error(
+        `Transferencia multiple duplicada detectada (misma transferencia repetida dentro de ${VENTANA_DEDUP_MS}ms): se devuelve el resultado anterior sin repetirla.`
+      );
+      return operacionesProcesadas.get(operacionKey);
+    }
+    operacionesEnProceso.add(operacionKey);
+    try {
+      const resultado = await sequelize.transaction(async (transaction) => {
+        const resultados = [];
+        for (const item of items) {
+          resultados.push(
+            await this.transferirInventario(
+              {
+                ...item,
+                id_sucursal_origen: data.id_sucursal_origen,
+                id_sucursal_destino: data.id_sucursal_destino,
+                id_trabajador: data.id_trabajador,
+              },
+              transaction
+            )
+          );
+        }
 
-    return {
-      message: `${resultados.length} producto(s) transferido(s) correctamente.`,
-      resultados,
-    };
+        return {
+          message: `${resultados.length} producto(s) transferido(s) correctamente.`,
+          resultados,
+        };
+      });
+      operacionesProcesadas.set(operacionKey, resultado);
+      setTimeout(() => operacionesProcesadas.delete(operacionKey), VENTANA_DEDUP_MS);
+      return resultado;
+    } finally {
+      operacionesEnProceso.delete(operacionKey);
+    }
   }
 
   async cargarStockInicial(data) {
@@ -580,6 +647,37 @@ class servicesSucursal {
       throw new Error("Debe indicar al menos una cantidad mayor a cero.");
     }
 
+    const operacionKey = buildOperacionKey("stock-inicial", {
+      idSucursal,
+      idTrabajador,
+      itemsValidos,
+    });
+    if (operacionesEnProceso.has(operacionKey)) {
+      throw new Error("Esta carga de stock ya se esta procesando. Espere un momento.");
+    }
+    if (operacionesProcesadas.has(operacionKey)) {
+      console.error(
+        `Carga de stock inicial duplicada detectada (misma carga repetida dentro de ${VENTANA_DEDUP_MS}ms): se devuelve el resultado anterior sin repetirla.`
+      );
+      return operacionesProcesadas.get(operacionKey);
+    }
+    operacionesEnProceso.add(operacionKey);
+
+    try {
+      const resultado = await this.ejecutarCargaStockInicial(
+        idSucursal,
+        idTrabajador,
+        itemsValidos
+      );
+      operacionesProcesadas.set(operacionKey, resultado);
+      setTimeout(() => operacionesProcesadas.delete(operacionKey), VENTANA_DEDUP_MS);
+      return resultado;
+    } finally {
+      operacionesEnProceso.delete(operacionKey);
+    }
+  }
+
+  async ejecutarCargaStockInicial(idSucursal, idTrabajador, itemsValidos) {
     return await sequelize.transaction(async (transaction) => {
       const sucursal = await Sucursal.findByPk(idSucursal, { transaction });
       if (!sucursal) throw new Error("Sucursal no encontrada.");

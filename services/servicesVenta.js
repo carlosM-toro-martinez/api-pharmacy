@@ -73,6 +73,9 @@ class servicesVenta {
     const sucursalPrincipal = await sucursalService.obtenerSucursalPrincipal(
       transaction
     );
+    console.error(
+      `Operacion de venta sin id_sucursal: se asumio la sucursal principal (${sucursalPrincipal.id_sucursal}). Revisar por que no llego la sucursal del trabajador.`
+    );
     return sucursalPrincipal.id_sucursal;
   }
 
@@ -134,7 +137,7 @@ class servicesVenta {
       return;
     }
 
-    const caja = await Caja.findByPk(id_caja, { transaction });
+    const caja = await Caja.findByPk(id_caja, { transaction, lock: true });
     if (!caja) throw new Error(`Caja ${id_caja} no encontrada`);
 
     const montoVenta = parseFloat(dataVenta.total);
@@ -406,7 +409,19 @@ class servicesVenta {
       const id_trabajador = ventaDetalles[0].id_trabajador;
       const clienteId = ventaDetalles[0].clienteId;
       const total = ventaDetalles[0].total;
-      const ventaOriginal = await Venta.findByPk(id_venta, { transaction: t });
+      // lock:true bloquea la fila de la venta mientras dura esta
+      // transaccion: si dos anulaciones de la MISMA venta llegan casi
+      // juntas (doble clic, reintento de red), la segunda espera a que la
+      // primera termine y borre la venta, y entonces este findByPk ya no
+      // encuentra nada — sin esto, las dos podian pasar de largo, restaurar
+      // el inventario dos veces y devolver el dinero a caja dos veces.
+      const ventaOriginal = await Venta.findByPk(id_venta, {
+        transaction: t,
+        lock: true,
+      });
+      if (!ventaOriginal) {
+        throw new Error(`La venta ${id_venta} ya fue anulada o no existe.`);
+      }
       const metodoPagoOriginal =
         ventaDetalles[0].metodo_pago || ventaOriginal?.metodo_pago || "Contado";
       const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
@@ -433,7 +448,11 @@ class servicesVenta {
 
         // Restaurar inventario del lote
         const inv = await Inventario.findOne({
-          where: { id_producto, id_lote, id_sucursal: idSucursalOperacion },
+          where: {
+            id_producto,
+            id_lote: id_lote || null,
+            id_sucursal: idSucursalOperacion,
+          },
           lock: true,
           transaction: t,
         });
@@ -483,7 +502,10 @@ class servicesVenta {
 
       if (metodoPagoOriginal !== "QR") {
         // Actualizar caja y registrar movimiento
-        const caja = await Caja.findByPk(id_caja, { transaction: t });
+        const caja = await Caja.findByPk(id_caja, {
+          transaction: t,
+          lock: true,
+        });
         if (!caja) throw new Error(`Caja ${id_caja} no encontrada`);
         const nuevoMonto = parseFloat(caja.monto_final) - parseFloat(total);
         await caja.update({ monto_final: nuevoMonto }, { transaction: t });
