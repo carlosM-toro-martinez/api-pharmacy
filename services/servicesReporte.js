@@ -236,6 +236,39 @@ class servicesReporte {
     const rangoFechas = construirRangoFechas(filters.desde, filters.hasta);
     if (rangoFechas) where.fecha_venta = rangoFechas;
 
+    // Buscar por producto: se resuelve primero a que ventas tienen una
+    // linea de ese producto (nombre o codigo de barra), y recien ahi se
+    // filtra la consulta principal por esos id_venta. No se puede filtrar
+    // directo sobre "detallesVenta" porque ese include usa separate:true
+    // (una segunda consulta, para no multiplicar la fila de Venta por
+    // cada producto) — un where ahi no afectaria la consulta principal.
+    const busquedaProducto = String(filters.producto || "").trim();
+    if (busquedaProducto) {
+      const ventasConProducto = await DetalleVenta.findAll({
+        attributes: ["id_venta"],
+        include: [
+          {
+            model: Producto,
+            as: "producto",
+            attributes: [],
+            required: true,
+            where: {
+              [Op.or]: [
+                { nombre: { [Op.iLike]: `%${busquedaProducto}%` } },
+                { codigo_barra: { [Op.iLike]: `%${busquedaProducto}%` } },
+              ],
+            },
+          },
+        ],
+        raw: true,
+      });
+      const idsVenta = [
+        ...new Set(ventasConProducto.map((v) => v.id_venta)),
+      ];
+      if (!idsVenta.length) return [];
+      where.id_venta = { [Op.in]: idsVenta };
+    }
+
     const ventas = await Venta.findAll({
       where,
       include: [
