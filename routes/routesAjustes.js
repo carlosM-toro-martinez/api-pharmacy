@@ -84,6 +84,19 @@ route.get("/ventas-duplicadas", async (req, res) => {
   }
 });
 
+route.post("/ventas-duplicadas/corregir", async (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const resultado = await ajustesService.corregirStockVentasDuplicadas(
+      items
+    );
+    res.json(resultado);
+  } catch (error) {
+    console.error("Error corrigiendo stock por ventas duplicadas:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 route.get("/inventarios-negativos", async (req, res) => {
   try {
     const negativos = await ajustesService.auditarInventariosNegativos();

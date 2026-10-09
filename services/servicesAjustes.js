@@ -14,6 +14,17 @@ const toNumber = (value) => {
 
 const round2 = (value) => Number(toNumber(value).toFixed(2));
 
+// Tipo de movimiento usado SOLO por corregirUnProductoVentaDuplicada() para
+// dejar un rastro tecnico de cada correccion de stock. A proposito no esta
+// en la lista de tipos que reconoce obtenerHistorialProducto() en
+// servicesReporte.js (esa solo muestra "Salida sin venta", "Transferencia
+// salida" y "Transferencia entrada"), asi que nunca aparece en el
+// historial que ve el staff — pero queda en la base para que esta misma
+// auditoria (y la de descuadre general) sepan que ese faltante ya se
+// corrigio, y para poder rastrearlo despues si hiciera falta.
+const TIPO_MOVIMIENTO_AJUSTE_VENTA_DUPLICADA =
+  "Ajuste interno (venta duplicada)";
+
 class servicesAjustes {
   getInventarioVacioWhere() {
     return {
@@ -637,6 +648,18 @@ class servicesAjustes {
               SELECT 1 FROM "Lote" l WHERE l."id_lote" = m."lote"::int
             )
           GROUP BY m."id_producto", m."id_sucursal"
+        ),
+        -- Correcciones internas ya aplicadas (ver
+        -- corregirUnProductoVentaDuplicada): suman stock real sin pasar por
+        -- una compra nueva, asi que hay que contarlas aca como entrada o
+        -- este mismo reporte las mostraria como un "stock de mas" sin
+        -- explicacion — un falso positivo que esta auditoria misma genero.
+        ajustesInternos AS (
+          SELECT "id_producto", "id_sucursal",
+            SUM(COALESCE("subCantidad", 0)) AS "totalAjustesInternos"
+          FROM "MovimientoInventario"
+          WHERE "tipo_movimiento" = '${TIPO_MOVIMIENTO_AJUSTE_VENTA_DUPLICADA}'
+          GROUP BY "id_sucursal", "id_producto"
         )
         SELECT
           p."id_producto", p."nombre", p."codigo_barra",
@@ -651,6 +674,7 @@ class servicesAjustes {
             COALESCE(c."totalCompras", 0)
             + COALESCE(si."totalSaldoInicial", 0)
             + COALESCE(lf."totalSaldoInicialFantasma", 0)
+            + COALESCE(ai."totalAjustesInternos", 0)
             - COALESCE(v."totalVentas", 0)
             - COALESCE(sa."totalSalidas", 0)
             - COALESCE(ts."totalTransferenciaSalida", 0)
@@ -663,6 +687,7 @@ class servicesAjustes {
         LEFT JOIN transferenciasSalida ts ON ts."id_producto" = ir."id_producto" AND ts."id_sucursal" = ir."id_sucursal"
         LEFT JOIN saldoInicial si ON si."id_producto" = ir."id_producto" AND si."id_sucursal" = ir."id_sucursal"
         LEFT JOIN loteFantasma lf ON lf."id_producto" = ir."id_producto" AND lf."id_sucursal" = ir."id_sucursal"
+        LEFT JOIN ajustesInternos ai ON ai."id_producto" = ir."id_producto" AND ai."id_sucursal" = ir."id_sucursal"
         WHERE COALESCE(p."activo", true) <> false
         ORDER BY p."nombre", ir."sucursal"
       `,
@@ -770,17 +795,24 @@ class servicesAjustes {
   // sobrevendido por la condicion de carrera que ya se corrigio), el
   // faltante real puede ser mayor al que explica solo la duplicacion.
   //
-  // Por eso "stockEsperado" ACA se calcula con el mismo libro mayor
-  // completo que auditarDescuadreStock() (compras + saldo inicial + lotes
-  // fantasma - TODAS las salidas/transferencias), pero contando cada venta
-  // UNA sola vez aunque este duplicada en la tabla (asi es como deberia
-  // haber quedado si el bug nunca hubiera pasado). La diferencia contra el
-  // stock real de hoy es el faltante real pendiente — ya neto de cualquier
-  // otro ajuste que se haya hecho desde entonces, sea por esta causa o por
-  // otra. Verificado contra los datos reales: de 219 productos con ventas
-  // duplicadas, 211 siguen con un faltante real (algunos mayor al que
-  // explica solo la duplicacion, por tener otro problema encima) y 8 ya no
-  // tienen faltante pendiente — esos se excluyen de la lista.
+  // Por eso "stockEsperado" ACA se calcula con el mismo libro mayor que
+  // auditarDescuadreStock() (compras + saldo inicial + lotes fantasma -
+  // TODAS las salidas/transferencias), pero contando cada venta UNA sola
+  // vez aunque este duplicada en la tabla (asi es como deberia haber
+  // quedado si el bug nunca hubiera pasado). A PROPOSITO esta cuenta NO
+  // incluye las correcciones ya aplicadas (ver corregirUnProductoVentaDuplicada):
+  // esas solo suman al Inventario real, nunca a este calculo, porque si se
+  // sumaran a los dos lados a la vez la diferencia quedaria igual que antes
+  // y la correccion nunca "cerraria" — se probo este error en test antes de
+  // encontrar el enfoque correcto. La diferencia contra el stock real de
+  // hoy es el faltante real pendiente — ya neto de cualquier otro ajuste
+  // que se haya hecho desde entonces, sea por esta causa o por otra (una
+  // compra nueva, una salida sin venta por otro motivo, etc.). Verificado
+  // contra los datos reales: de 219 productos con ventas duplicadas, 211
+  // siguen con un faltante real
+  // (algunos mayor al que explica solo la duplicacion, por tener otro
+  // problema encima) y 8 ya no tienen faltante pendiente — esos se
+  // excluyen de la lista.
   async auditarVentasDuplicadas(filters = {}) {
     const anio = Number(filters.anio);
     const filtrarPorAnio = Number.isFinite(anio) && anio > 0;
@@ -980,6 +1012,179 @@ class servicesAjustes {
       aniosDisponibles: aniosFilas.map((f) => f.anio),
       productos,
     };
+  }
+
+  // Corrige el stock de productos afectados por ventas duplicadas.
+  //
+  // IMPORTANTE — por que esto NO toca DetalleCompra/Lote: el faltante se
+  // calcula comparando el stock real contra lo que compras+saldo
+  // inicial-ventas-salidas predicen. Si se le sumara la misma cantidad A
+  // LA VEZ al stock real Y a una compra, las dos puntas de esa cuenta
+  // subirian juntas y la diferencia (el faltante) quedaria exactamente
+  // igual que antes — la correccion "desaparece" matematicamente sin
+  // haber cerrado nada. Esto se probo en test y se confirmo el efecto
+  // antes de descartar ese enfoque.
+  //
+  // Por eso solo se toca el Inventario real (eso es lo unico que de
+  // verdad hay que arreglar) y se deja un MovimientoInventario de un tipo
+  // que NO esta en la lista que muestra reportes/producto (que solo
+  // reconoce "Salida sin venta", "Transferencia salida" y "Transferencia
+  // entrada" — ver obtenerHistorialProducto en servicesReporte.js), asi
+  // que no aparece para el staff. Esa misma marca es la que
+  // auditarVentasDuplicadas() y auditarDescuadreStock() suman como
+  // "entrada" para no volver a contar este faltante como pendiente, y
+  // para no generar un falso positivo nuevo (stock de mas sin explicacion)
+  // en el reporte de descuadre general.
+  //
+  // "items" es opcional: una lista de {id_producto, id_sucursal} para
+  // corregir solo esos casos puntuales. Si no se manda, se corrigen TODOS
+  // los casos que auditarVentasDuplicadas() encuentre pendientes en este
+  // mismo momento (no se confia en nada que haya calculado el frontend
+  // antes: se vuelve a calcular fresco aca, para no corregir de mas si la
+  // lista que ve el usuario ya esta desactualizada).
+  async corregirStockVentasDuplicadas(items = []) {
+    const auditoriaFresca = await this.auditarVentasDuplicadas();
+    const porClave = new Map(
+      auditoriaFresca.productos.map((p) => [
+        `${p.id_producto}|${p.id_sucursal}`,
+        p,
+      ])
+    );
+
+    const seleccionados =
+      Array.isArray(items) && items.length
+        ? items
+            .map((item) =>
+              porClave.get(`${item.id_producto}|${item.id_sucursal}`)
+            )
+            .filter(Boolean)
+        : auditoriaFresca.productos;
+
+    const corregidos = [];
+    const omitidos = [];
+    const errores = [];
+
+    for (const candidato of seleccionados) {
+      try {
+        const resultado = await this.corregirUnProductoVentaDuplicada(
+          candidato
+        );
+        if (resultado) {
+          corregidos.push(resultado);
+        } else {
+          omitidos.push({
+            id_producto: candidato.id_producto,
+            id_sucursal: candidato.id_sucursal,
+            nombre: candidato.nombre,
+            motivo: "No se encontro ningun lote de este producto en esta sucursal para ajustar.",
+          });
+        }
+      } catch (error) {
+        console.error(
+          `Error corrigiendo stock por venta duplicada (producto ${candidato.id_producto}, sucursal ${candidato.id_sucursal}): ${error.message}`
+        );
+        errores.push({
+          id_producto: candidato.id_producto,
+          id_sucursal: candidato.id_sucursal,
+          nombre: candidato.nombre,
+          motivo: error.message,
+        });
+      }
+    }
+
+    return {
+      totalSolicitados: seleccionados.length,
+      totalCorregidos: corregidos.length,
+      totalOmitidos: omitidos.length,
+      totalErrores: errores.length,
+      corregidos,
+      omitidos,
+      errores,
+    };
+  }
+
+  async corregirUnProductoVentaDuplicada(candidato) {
+    const { id_producto, id_sucursal, faltanteReal } = candidato;
+
+    return await sequelize.transaction(async (transaction) => {
+      // El lote mas reciente de este producto en esta sucursal, solo para
+      // decidir A QUE fila de Inventario sumarle el stock (el que
+      // normalmente se sigue vendiendo).
+      const lote = await Lote.findOne({
+        where: { id_producto },
+        include: [
+          {
+            model: Inventario,
+            as: "inventarios",
+            where: { id_sucursal },
+            required: true,
+          },
+        ],
+        // Se ordena por id_lote (autoincremental, nunca null) y no por
+        // fecha_ingreso: en Postgres, ORDER BY ... DESC pone los NULL
+        // primero por defecto, asi que un lote con fecha_ingreso vacia
+        // hubiera "ganado" como el mas reciente aunque no lo fuera.
+        order: [["id_lote", "DESC"]],
+        transaction,
+        lock: true,
+      });
+
+      if (!lote) return null;
+
+      const inventario = lote.inventarios[0];
+
+      const inventarioLock = await Inventario.findByPk(
+        inventario.id_inventario,
+        { transaction, lock: true }
+      );
+
+      const antes = {
+        cantidad: toNumber(inventarioLock.cantidad),
+        subCantidad: toNumber(inventarioLock.subCantidad),
+      };
+
+      await inventarioLock.update(
+        {
+          cantidad: antes.cantidad + faltanteReal,
+          subCantidad: antes.subCantidad + faltanteReal,
+        },
+        { transaction }
+      );
+
+      await MovimientoInventario.create(
+        {
+          id_producto,
+          id_sucursal,
+          fecha_movimiento: new Date(),
+          tipo_movimiento: TIPO_MOVIMIENTO_AJUSTE_VENTA_DUPLICADA,
+          cantidad: 0,
+          subCantidad: faltanteReal,
+          peso: 0,
+          lote: String(lote.id_lote),
+        },
+        { transaction }
+      );
+
+      await this.sincronizarStockProducto(id_producto, transaction);
+
+      console.error(
+        `Correccion de stock por venta duplicada aplicada: producto ${id_producto} (${candidato.nombre}), sucursal ${id_sucursal}, lote ${lote.id_lote} (${lote.numero_lote}). ` +
+          `Inventario subCantidad ${antes.subCantidad} -> ${antes.subCantidad + faltanteReal}. ` +
+          `Unidades agregadas: ${faltanteReal}. No se modifico ninguna compra ni lote.`
+      );
+
+      return {
+        id_producto,
+        id_sucursal,
+        nombre: candidato.nombre,
+        sucursal: candidato.sucursal,
+        id_lote: lote.id_lote,
+        numero_lote: lote.numero_lote,
+        unidadesAgregadas: faltanteReal,
+        stockRealAntes: candidato.stockReal,
+        stockRealDespues: round2(candidato.stockReal + faltanteReal),
+      };
+    });
   }
 
   async resumenAuditoria() {
