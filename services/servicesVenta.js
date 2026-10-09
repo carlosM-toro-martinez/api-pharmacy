@@ -167,7 +167,35 @@ class servicesVenta {
       transaction
     );
 
+    // Defensa adicional: si por un bug del carrito (ej. un Enter que
+    // dispara el agregado dos veces) el mismo producto+lote llega
+    // duplicado en "detalles", se fusiona sumando cantidades en vez de
+    // crear dos DetalleVenta y descontar el inventario dos veces para una
+    // venta que se cobro una sola vez.
+    const detallesFusionados = [];
+    const indicePorClave = new Map();
     for (const det of detalles) {
+      const clave = `${det.id_producto}|${det.id_lote ?? "null"}`;
+      if (indicePorClave.has(clave)) {
+        const existente = detallesFusionados[indicePorClave.get(clave)];
+        existente.cantidad =
+          (Number(existente.cantidad) || 0) + (Number(det.cantidad) || 0);
+        existente.cantidad_unidad =
+          (Number(existente.cantidad_unidad) || 0) +
+          (Number(det.cantidad_unidad) || 0);
+        existente.peso = (Number(existente.peso) || 0) + (Number(det.peso) || 0);
+        existente.precio =
+          (Number(existente.precio) || 0) + (Number(det.precio) || 0);
+        console.error(
+          `Linea de venta duplicada detectada y fusionada (id_producto=${det.id_producto} id_lote=${det.id_lote}): se suman las cantidades en vez de descontar el inventario dos veces.`
+        );
+      } else {
+        indicePorClave.set(clave, detallesFusionados.length);
+        detallesFusionados.push({ ...det });
+      }
+    }
+
+    for (const det of detallesFusionados) {
       let {
         id_producto,
         id_lote,
