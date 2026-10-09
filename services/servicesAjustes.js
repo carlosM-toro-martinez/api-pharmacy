@@ -816,6 +816,19 @@ class servicesAjustes {
   async auditarVentasDuplicadas(filters = {}) {
     const anio = Number(filters.anio);
     const filtrarPorAnio = Number.isFinite(anio) && anio > 0;
+    const idSucursal = Number(filters.id_sucursal);
+    const filtrarPorSucursal = Number.isFinite(idSucursal) && idSucursal > 0;
+
+    const condicionesDuplicados = [];
+    if (filtrarPorAnio) {
+      condicionesDuplicados.push(`EXTRACT(YEAR FROM v."fecha_venta") = :anio`);
+    }
+    if (filtrarPorSucursal) {
+      condicionesDuplicados.push(`v."id_sucursal" = :id_sucursal`);
+    }
+    const whereDuplicadosFiltrados = condicionesDuplicados.length
+      ? `WHERE ${condicionesDuplicados.join(" AND ")}`
+      : "";
 
     const filas = await sequelize.query(
       `
@@ -892,7 +905,7 @@ class servicesAjustes {
           SELECT d.*, v."fecha_venta", v."id_sucursal"
           FROM duplicados d
           JOIN "Venta" v ON v."id_venta" = d."id_venta"
-          ${filtrarPorAnio ? `WHERE EXTRACT(YEAR FROM v."fecha_venta") = :anio` : ""}
+          ${whereDuplicadosFiltrados}
         ),
         resumenDuplicados AS (
           SELECT df."id_producto", p."nombre", p."codigo_barra",
@@ -949,7 +962,10 @@ class servicesAjustes {
       `,
       {
         type: QueryTypes.SELECT,
-        replacements: filtrarPorAnio ? { anio } : {},
+        replacements: {
+          ...(filtrarPorAnio ? { anio } : {}),
+          ...(filtrarPorSucursal ? { id_sucursal: idSucursal } : {}),
+        },
       }
     );
 
