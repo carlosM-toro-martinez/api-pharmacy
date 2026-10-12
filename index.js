@@ -64,7 +64,20 @@ const PORT = process.env.PORT || 3000;
 
 async function createInitialData() {
   const sucursalService = new SucursalService();
-  await sucursalService.inicializarSucursalPrincipal();
+  // Si ninguna sucursal esta marcada como principal (ej. alguien la
+  // desmarco sin marcar otra), esto ahora falla en vez de fabricar una
+  // sucursal fantasma (ver servicesSucursal.js). No debe tumbar el arranque
+  // del servidor entero por eso — solo se avisa y se sigue con el resto de
+  // la inicializacion; un administrador debe marcar una sucursal real como
+  // principal cuanto antes.
+  try {
+    await sucursalService.inicializarSucursalPrincipal();
+  } catch (error) {
+    console.error(
+      "No se pudo inicializar la sucursal principal (revisar que una sucursal real este marcada como principal):",
+      error.message
+    );
+  }
 
   const permisos = [
     { nombre: "reportes" },

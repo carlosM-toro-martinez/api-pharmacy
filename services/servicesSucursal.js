@@ -31,6 +31,15 @@ const VENTANA_DEDUP_MS = 5000;
 const buildOperacionKey = (tipo, data) => JSON.stringify({ tipo, data });
 
 class servicesSucursal {
+  // Antes, si ninguna sucursal estaba marcada como principal, esta funcion
+  // fabricaba una sucursal fantasma llamada "Sucursal principal" (ver
+  // findOrCreate mas abajo, ya quitado) — una tercera sucursal que nadie
+  // creo a proposito, que no se podia borrar en cuanto algo le generaba un
+  // registro, y que ademas absorbia en cada arranque del servidor
+  // cualquier Venta/Inventario/Caja con sucursal vacia (ver
+  // inicializarSucursalPrincipal). Ahora exige que una de las sucursales
+  // reales ya este marcada como principal (con marcarPrincipal) y, si no,
+  // falla con un mensaje claro en vez de inventar una sucursal nueva.
   async obtenerSucursalPrincipal(transaction = null) {
     const marcadaPrincipal = await Sucursal.findOne({
       where: { es_principal: true, activo: true },
@@ -39,25 +48,9 @@ class servicesSucursal {
     });
     if (marcadaPrincipal) return marcadaPrincipal;
 
-    const [sucursal] = await Sucursal.findOrCreate({
-      where: { nombre: "Sucursal principal" },
-      defaults: {
-        direccion: "Principal",
-        dominio: null,
-        es_principal: true,
-        activo: true,
-      },
-      transaction,
-    });
-
-    if (!sucursal.es_principal || !sucursal.activo) {
-      await sucursal.update(
-        { es_principal: true, activo: true },
-        { transaction }
-      );
-    }
-
-    return sucursal;
+    throw new Error(
+      "Ninguna sucursal esta marcada como principal. Marca una sucursal real como principal antes de continuar."
+    );
   }
 
   async inicializarSucursalPrincipal() {

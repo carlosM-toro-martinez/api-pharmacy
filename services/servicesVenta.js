@@ -108,15 +108,34 @@ class servicesVenta {
 
     try {
     return await sequelize.transaction(async (t) => {
-      const venta = await Venta.create(dataVenta, { transaction: t });
+      // Se resuelve UNA sola vez aca (con el mismo respaldo a sucursal
+      // principal que ya se usaba solo para el inventario) y se reusa para
+      // la Venta y el MovimientoCaja tambien. Antes, si dataVenta.id_sucursal
+      // llegaba vacio (ej. sesion a medio caducar), la Venta y el
+      // MovimientoCaja se guardaban con sucursal en blanco mientras que el
+      // inventario SI se resolvia correctamente — dejando la venta real
+      // invisible en cualquier reporte filtrado por sucursal, aunque el
+      // stock si se hubiera descontado bien.
+      const idSucursalOperacion = await this.obtenerIdSucursalOperacion(
+        dataVenta?.id_sucursal,
+        t
+      );
+      const dataVentaConSucursal = {
+        ...dataVenta,
+        id_sucursal: idSucursalOperacion,
+      };
 
-      await this.actualizarCajaYMovimientos(id_caja, dataVenta, t);
+      const venta = await Venta.create(dataVentaConSucursal, {
+        transaction: t,
+      });
+
+      await this.actualizarCajaYMovimientos(id_caja, dataVentaConSucursal, t);
 
       await this.grabarDetallesYAjustarInventario(
         venta.id_venta,
         detalles,
         t,
-        dataVenta?.id_sucursal
+        idSucursalOperacion
       );
 
       const clienteId = detalles[0].clienteId;
